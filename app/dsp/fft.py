@@ -1,0 +1,151 @@
+"""
+FFT processing utilities for spectrum analysis.
+Supports multiple FFT sizes, window functions, and frequency scaling (Mel, Log, Linear).
+"""
+
+import numpy as np
+from scipy.fft import rfft, rfftfreq
+from scipy.signal import get_window
+
+
+def compute_fft(data: np.ndarray, fft_size: int = 4096,
+                window: str = "hann") -> tuple[np.ndarray, np.ndarray]:
+    """
+    Compute the magnitude spectrum of audio data.
+
+    Args:
+        data: 1-D float32 audio samples.
+        fft_size: Number of FFT bins.
+        window: Window function name (scipy compatible).
+
+    Returns:
+        (frequencies_hz, magnitude_db) arrays.
+    """
+    n = min(len(data), fft_size)
+    padded = np.zeros(fft_size, dtype=np.float32)
+    padded[:n] = data[:n]
+
+    win = get_window(window, fft_size, fftbins=True).astype(np.float32)
+    windowed = padded * win
+
+    spectrum = rfft(windowed)
+    magnitude = np.abs(spectrum)
+
+    # Normalise & convert to dB
+    magnitude = magnitude / (fft_size / 2)
+    magnitude = np.clip(magnitude, 1e-10, None)
+    magnitude_db = 20.0 * np.log10(magnitude)
+
+    return magnitude_db
+
+
+def fft_frequencies(fft_size: int, sample_rate: float) -> np.ndarray:
+    """Return the frequency array for a given FFT size."""
+    return rfftfreq(fft_size, d=1.0 / sample_rate)
+
+
+# ── Frequency Scale Mappings ────────────────────────────────────────────────
+
+def hz_to_mel(hz: np.ndarray) -> np.ndarray:
+    """Convert Hz to Mel scale."""
+    return 2595.0 * np.log10(1.0 + hz / 700.0)
+
+
+def mel_to_hz(mel: np.ndarray) -> np.ndarray:
+    """Convert Mel back to Hz."""
+    return 700.0 * (10.0 ** (mel / 2595.0) - 1.0)
+
+
+def map_frequencies_to_pixels(freqs: np.ndarray, width: int,
+                              scale: str = "logarithmic",
+                              f_min: float = 20.0,
+                              f_max: float = 20000.0) -> np.ndarray:
+    """
+    Map frequency bins to pixel x-positions using the given scale.
+
+    Args:
+        freqs: Array of frequency values in Hz.
+        width: Pixel width of the display.
+        scale: One of 'linear', 'logarithmic', 'mel'.
+        f_min: Minimum displayed frequency.
+        f_max: Maximum displayed frequency.
+
+    Returns:
+        Array of pixel positions (float).
+    """
+    freqs = np.clip(freqs, f_min, f_max)
+
+    if scale == "linear":
+        positions = (freqs - f_min) / (f_max - f_min) * width
+
+    elif scale == "logarithmic":
+        log_min = np.log10(max(f_min, 1.0))
+        log_max = np.log10(f_max)
+        positions = (np.log10(np.clip(freqs, f_min, None)) - log_min) / (log_max - log_min) * width
+
+    elif scale == "mel":
+        mel_min = hz_to_mel(np.array([f_min]))[0]
+        mel_max = hz_to_mel(np.array([f_max]))[0]
+        mel_vals = hz_to_mel(freqs)
+        positions = (mel_vals - mel_min) / (mel_max - mel_min) * width
+
+    else:
+        positions = (freqs - f_min) / (f_max - f_min) * width
+
+    return positions
+
+
+def detect_peak_frequency(magnitude_db: np.ndarray, freqs: np.ndarray,
+                          f_min: float = 20.0,
+                          f_max: float = 20000.0) -> tuple[float, float]:
+    """
+    Find the loudest frequency in the spectrum.
+
+    Returns:
+        (frequency_hz, magnitude_db)
+    """
+    mask = (freqs >= f_min) & (freqs <= f_max)
+    if not np.any(mask):
+        return 0.0, -120.0
+    filtered_mag = magnitude_db[mask]
+    filtered_freq = freqs[mask]
+    idx = np.argmax(filtered_mag)
+    return float(filtered_freq[idx]), float(filtered_mag[idx])
+
+
+def hz_to_note_name(hz: float) -> str:
+    """Convert a frequency in Hz to the nearest musical note name."""
+    if hz <= 0:
+        return "---"
+    note_names = ["C", "C#", "D", "D#", "E", "F",
+                  "F#", "G", "G#", "A", "A#", "B"]
+    midi = 69 + 12 * np.log2(hz / 440.0)
+    midi_rounded = int(round(midi))
+    note = note_names[midi_rounded % 12]
+    octave = (midi_rounded // 12) - 1
+    cents = int(round((midi - midi_rounded) * 100))
+    sign = "+" if cents >= 0 else ""
+    return f"{note}{octave} {sign}{cents}c"
+
+
+def apply_tilt(magnitude_db: np.ndarray, freqs: np.ndarray,
+               tilt_db: float) -> np.ndarray:
+    """
+    Apply a spectral tilt. Positive tilts boost highs, negative boosts lows.
+
+    Args:
+        magnitude_db: Magnitude spectrum in dB.
+        freqs: Corresponding frequency array.
+        tilt_db: Tilt amount in dB across the spectrum.
+
+    Returns:
+        Tilted magnitude spectrum.
+    """
+    if abs(tilt_db) < 0.01:
+        return magnitude_db
+    log_freqs = np.log10(np.clip(freqs, 20.0, None))
+    log_min = np.log10(20.0)
+    log_max = np.log10(20000.0)
+    norm = (log_freqs - log_min) / (log_max - log_min)  # 0..1
+    tilt_curve = (norm - 0.5) * tilt_db
+    return magnitude_db + tilt_curve
