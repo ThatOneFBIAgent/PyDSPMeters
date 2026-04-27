@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, QRectF
 
 from app.base_module import BaseModule
 from app.modules import register_module
-from app.theme import Colors, Fonts, HEATMAP_STOPS
+from app.theme import Colors, Fonts
 from app.dsp.fft import compute_fft, fft_frequencies, map_frequencies_to_pixels
 
 
@@ -47,27 +47,72 @@ class SpectrogramModule(BaseModule):
         self._history_len = 400
         self._history = np.zeros((self._history_len, self._display_h), dtype=np.float32)
         self._col_idx = 0
-        self._lut = _build_colormap(HEATMAP_STOPS)
+        self._lut = _build_colormap(Colors.HEATMAP_STOPS)
         self._img_cache = None  # Keep reference for QImage data
         self._frame_skip = 0
         super().__init__(audio_engine, title="Spectrogram", parent=parent)
         self.canvas.set_render_func(self._render)
 
-    def setup_settings(self):
-        c = self.settings.add_combo("FFT Size", ["1024", "2048", "4096", "8192"], 1)
-        c.currentTextChanged.connect(lambda t: self._set_fft(int(t)))
-        c = self.settings.add_combo("Scale", ["Mel", "Logarithmic", "Linear"], 1)
-        c.currentTextChanged.connect(lambda t: setattr(self, "_scale", t.lower()))
-        c = self.settings.add_combo("Orientation", ["Horizontal", "Vertical"], 0)
-        c.currentTextChanged.connect(lambda t: setattr(self, "_orientation", t))
-        s = self.settings.add_slider("Tilt", -20, 20, 0)
-        s.valueChanged.connect(lambda v: setattr(self, "_tilt", float(v)))
-        c = self.settings.add_combo("Mode", ["Sharper", "Sharp", "Classic"], 2)
-        c.currentTextChanged.connect(lambda t: setattr(self, "_mode", t))
-        self.settings.add_checkbox("Piano", False).toggled.connect(
-            lambda v: setattr(self, "_show_piano", v))
-        self.settings.add_checkbox("Freq Lines", True).toggled.connect(
-            lambda v: setattr(self, "_show_freq", v))
+    def on_theme_changed(self):
+        self._lut = _build_colormap(Colors.HEATMAP_STOPS)
+
+    def build_context_menu(self, menu):
+        from PySide6.QtGui import QActionGroup
+        
+        fm = menu.addMenu("FFT Size")
+        fg = QActionGroup(self)
+        for f in [1024, 2048, 4096, 8192]:
+            a = fm.addAction(str(f))
+            a.setCheckable(True)
+            a.setChecked(f == self._fft_size)
+            a.triggered.connect(lambda checked, t=f: self._set_fft(int(t)))
+            fg.addAction(a)
+
+        scm = menu.addMenu("Scale")
+        scg = QActionGroup(self)
+        for s in ["Mel", "Logarithmic", "Linear"]:
+            a = scm.addAction(s)
+            a.setCheckable(True)
+            a.setChecked(s.lower() == self._scale)
+            a.triggered.connect(lambda checked, t=s: setattr(self, "_scale", t.lower()))
+            scg.addAction(a)
+            
+        om = menu.addMenu("Orientation")
+        og = QActionGroup(self)
+        for o in ["Horizontal", "Vertical"]:
+            a = om.addAction(o)
+            a.setCheckable(True)
+            a.setChecked(o == self._orientation)
+            a.triggered.connect(lambda checked, t=o: setattr(self, "_orientation", t))
+            og.addAction(a)
+            
+        mm = menu.addMenu("Mode")
+        mg = QActionGroup(self)
+        for m in ["Sharper", "Sharp", "Classic"]:
+            a = mm.addAction(m)
+            a.setCheckable(True)
+            a.setChecked(m == self._mode)
+            a.triggered.connect(lambda checked, t=m: setattr(self, "_mode", t))
+            mg.addAction(a)
+
+        tm = menu.addMenu("Tilt")
+        tg = QActionGroup(self)
+        for t in [-20, -10, 0, 10, 20]:
+            a = tm.addAction(str(t))
+            a.setCheckable(True)
+            a.setChecked(abs(t - self._tilt) < 0.1)
+            a.triggered.connect(lambda checked, v=t: setattr(self, "_tilt", float(v)))
+            tg.addAction(a)
+
+        a = menu.addAction("Piano Overlay")
+        a.setCheckable(True)
+        a.setChecked(self._show_piano)
+        a.triggered.connect(lambda checked: setattr(self, "_show_piano", checked))
+
+        a = menu.addAction("Frequency Lines")
+        a.setCheckable(True)
+        a.setChecked(self._show_freq)
+        a.triggered.connect(lambda checked: setattr(self, "_show_freq", checked))
 
     def _set_fft(self, size):
         self._fft_size = size
@@ -99,6 +144,14 @@ class SpectrogramModule(BaseModule):
         px_int = np.clip(px.astype(np.int32), 0, self._display_h - 1)
         # Use numpy advanced indexing for speed
         np.maximum.at(column, px_int[:n_bins], norm[:n_bins])
+        
+        # Fill gaps in the column (especially at the low end where bins are sparse)
+        nonzero = np.where(column > 0)[0]
+        if len(nonzero) > 1:
+            from scipy.interpolate import interp1d
+            f = interp1d(nonzero, column[nonzero], kind='linear', fill_value="nearest")
+            full_idx = np.arange(nonzero[0], nonzero[-1] + 1)
+            column[full_idx] = np.maximum(column[full_idx], f(full_idx))
 
         idx = self._col_idx % self._history_len
         self._history[idx] = column
@@ -143,9 +196,8 @@ class SpectrogramModule(BaseModule):
                     if 0 < fy < h:
                         painter.setPen(QPen(QColor(255, 255, 255, 40), 1))
                         painter.drawLine(0, int(fy), w, int(fy))
-                        painter.setPen(QColor(255, 255, 255, 80))
                         lb = f"{gf}" if gf < 1000 else f"{gf // 1000}k"
-                        painter.drawText(QRectF(2, fy - 10, 30, 12), Qt.AlignLeft, lb)
+                        self.draw_text_badge(painter, QRectF(6, fy - 10, 30, 12), Qt.AlignLeft, lb, QColor(255, 255, 255, 150))
 
         if self._show_piano:
             self._draw_piano(painter, w, h)

@@ -22,19 +22,42 @@ class OscilloscopeModule(BaseModule):
         super().__init__(audio_engine, title="Oscilloscope", parent=parent)
         self.canvas.set_render_func(self._render)
 
-    def setup_settings(self):
-        c = self.settings.add_combo("Channel", ["L+R", "Left", "Right", "Mid", "Side"], 0)
-        c.currentTextChanged.connect(lambda t: setattr(self, "_channel", t))
-        s = self.settings.add_slider("Zoom", 256, 4096, 1024)
-        s.valueChanged.connect(lambda v: setattr(self, "_display_samples", v))
+    def build_context_menu(self, menu):
+        from PySide6.QtGui import QActionGroup
+        cm = menu.addMenu("Channel")
+        cg = QActionGroup(self)
+        for c in ["L+R", "Left", "Right", "Mid", "Side"]:
+            a = cm.addAction(c)
+            a.setCheckable(True)
+            a.setChecked(c == self._channel)
+            a.triggered.connect(lambda checked, ch=c: setattr(self, "_channel", ch))
+            cg.addAction(a)
+
+        zm = menu.addMenu("Zoom Samples")
+        zg = QActionGroup(self)
+        for z in [256, 512, 1024, 2048, 4096]:
+            a = zm.addAction(str(z))
+            a.setCheckable(True)
+            a.setChecked(z == self._display_samples)
+            a.triggered.connect(lambda checked, zv=z: setattr(self, "_display_samples", zv))
+            zg.addAction(a)
 
     def on_audio_data(self, data: np.ndarray):
         n = len(data)
-        self._waveform_l = np.roll(self._waveform_l, -n)
-        self._waveform_l[-n:] = data[:, 0]
-        r = data[:, 1] if data.shape[1] > 1 else data[:, 0]
-        self._waveform_r = np.roll(self._waveform_r, -n)
-        self._waveform_r[-n:] = r
+        buf_len = len(self._waveform_l)
+        
+        if n >= buf_len:
+            self._waveform_l[:] = data[-buf_len:, 0]
+            if data.shape[1] > 1:
+                self._waveform_r[:] = data[-buf_len:, 1]
+            else:
+                self._waveform_r[:] = data[-buf_len:, 0]
+        else:
+            self._waveform_l = np.roll(self._waveform_l, -n)
+            self._waveform_l[-n:] = data[:, 0]
+            r = data[:, 1] if data.shape[1] > 1 else data[:, 0]
+            self._waveform_r = np.roll(self._waveform_r, -n)
+            self._waveform_r[-n:] = r
 
     def _find_trigger(self, data):
         for i in range(1, len(data) - self._display_samples):

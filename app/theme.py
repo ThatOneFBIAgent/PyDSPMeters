@@ -17,6 +17,7 @@ THEME_PRESETS = {
         "ACCENT": "#00d4ff", "ACCENT_DIM": "#0088aa",
         "ACCENT_PURPLE": "#7c4dff", "ACCENT_PINK": "#ff4da6",
         "TEXT": "#d8d8f0", "TEXT_DIM": "#7878a0", "TEXT_BRIGHT": "#f0f0ff",
+        "BAND_LOW": "#0088ff", "BAND_MID": "#00e87b", "BAND_HIGH": "#ff4444",
     },
     "Abyss": {
         "BG_DARKEST": "#000000", "BG_DARK": "#0a0a0a", "BG_MODULE": "#0f0f0f",
@@ -25,6 +26,11 @@ THEME_PRESETS = {
         "ACCENT": "#e0e0e0", "ACCENT_DIM": "#808080",
         "ACCENT_PURPLE": "#9a9a9a", "ACCENT_PINK": "#c0c0c0",
         "TEXT": "#d0d0d0", "TEXT_DIM": "#666666", "TEXT_BRIGHT": "#ffffff",
+        "BAND_LOW": "#666666", "BAND_MID": "#aaaaaa", "BAND_HIGH": "#ffffff",
+        "HEATMAP_STOPS": [
+            (0.00, "#000000"), (0.30, "#222222"), (0.60, "#666666"),
+            (0.85, "#aaaaaa"), (1.00, "#ffffff")
+        ]
     },
     "Neon": {
         "BG_DARKEST": "#050a05", "BG_DARK": "#0a120a", "BG_MODULE": "#0e180e",
@@ -33,6 +39,11 @@ THEME_PRESETS = {
         "ACCENT": "#00ff88", "ACCENT_DIM": "#009950",
         "ACCENT_PURPLE": "#00cc66", "ACCENT_PINK": "#88ff00",
         "TEXT": "#c0f0c0", "TEXT_DIM": "#4a8a4a", "TEXT_BRIGHT": "#e0ffe0",
+        "BAND_LOW": "#00cc66", "BAND_MID": "#00ff88", "BAND_HIGH": "#88ff00",
+        "HEATMAP_STOPS": [
+            (0.00, "#000000"), (0.30, "#004422"), (0.60, "#00aa55"),
+            (0.85, "#44ff88"), (1.00, "#aaffcc")
+        ]
     },
     "Ember": {
         "BG_DARKEST": "#0c0806", "BG_DARK": "#140e0a", "BG_MODULE": "#1a1410",
@@ -41,6 +52,11 @@ THEME_PRESETS = {
         "ACCENT": "#ff8800", "ACCENT_DIM": "#aa5500",
         "ACCENT_PURPLE": "#ff6622", "ACCENT_PINK": "#ffaa44",
         "TEXT": "#f0dcc0", "TEXT_DIM": "#8a6a4a", "TEXT_BRIGHT": "#fff0dd",
+        "BAND_LOW": "#ff8800", "BAND_MID": "#ff6622", "BAND_HIGH": "#ffaa44",
+        "HEATMAP_STOPS": [
+            (0.00, "#000000"), (0.30, "#441100"), (0.60, "#aa4400"),
+            (0.85, "#ff8800"), (1.00, "#ffcc88")
+        ]
     },
     "Amethyst": {
         "BG_DARKEST": "#08060f", "BG_DARK": "#100c1a", "BG_MODULE": "#161222",
@@ -49,6 +65,25 @@ THEME_PRESETS = {
         "ACCENT": "#b060ff", "ACCENT_DIM": "#7030aa",
         "ACCENT_PURPLE": "#9040dd", "ACCENT_PINK": "#d080ff",
         "TEXT": "#dcd0f0", "TEXT_DIM": "#7868a0", "TEXT_BRIGHT": "#f0e8ff",
+        "BAND_LOW": "#7c4dff", "BAND_MID": "#b060ff", "BAND_HIGH": "#d080ff",
+        "HEATMAP_STOPS": [
+            (0.00, "#000000"), (0.30, "#220044"), (0.60, "#6600aa"),
+            (0.85, "#aa44ff"), (1.00, "#eebbaa")
+        ]
+    },
+    "Transparent Ghost": {
+        "BG_DARKEST": "#05000000", "BG_DARK": "#05000000", "BG_MODULE": "#05000000",
+        "BG_HEADER": "#05000000", "BG_SETTINGS": "#05000000", "BG_INPUT": "#05000000",
+        "BORDER": "#00000000", "BORDER_ACCENT": "#00000000",
+        "ACCENT": "#00d4ff", "ACCENT_DIM": "#0088aa",
+        "ACCENT_PURPLE": "#7c4dff", "ACCENT_PINK": "#ff4da6",
+        "TEXT": "#d8d8f0", "TEXT_DIM": "#7878a0", "TEXT_BRIGHT": "#f0f0ff",
+        "BAND_LOW": "#0088ff", "BAND_MID": "#00e87b", "BAND_HIGH": "#ff4444",
+        "HEATMAP_STOPS": [
+            (0.00, "#05000000"), (0.15, "#0a0040"), (0.30, "#0044cc"),
+            (0.45, "#00bbcc"), (0.55, "#00cc44"), (0.70, "#cccc00"),
+            (0.85, "#cc4400"), (1.00, "#ff0000")
+        ]
     },
 }
 
@@ -86,6 +121,12 @@ class Colors:
     BAND_LOW = "#0088ff"
     BAND_MID = "#00e87b"
     BAND_HIGH = "#ff4444"
+
+    HEATMAP_STOPS = [
+        (0.00, "#000000"), (0.15, "#0a0040"), (0.30, "#0044cc"),
+        (0.45, "#00bbcc"), (0.55, "#00cc44"), (0.70, "#cccc00"),
+        (0.85, "#cc4400"), (1.00, "#ff0000")
+    ]
 
     # Grid / subtle
     GRID = "#1a1a32"
@@ -127,16 +168,7 @@ def current_theme_name() -> str:
 
 
 # ── Spectrogram / Heatmap Color Maps ────────────────────────────────────────
-HEATMAP_STOPS = [
-    (0.00, "#000000"),
-    (0.15, "#0a0040"),
-    (0.30, "#0044cc"),
-    (0.45, "#00bbcc"),
-    (0.55, "#00cc44"),
-    (0.70, "#cccc00"),
-    (0.85, "#ff4400"),
-    (1.00, "#ffffff"),
-]
+# (Use Colors.HEATMAP_STOPS instead)
 
 
 # ── Fonts ────────────────────────────────────────────────────────────────────

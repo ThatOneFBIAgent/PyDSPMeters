@@ -15,9 +15,8 @@ from app.theme import Colors, Fonts
 
 
 class ModuleHeader(QFrame):
-    """Compact header bar with title, settings toggle, and close button."""
+    """Compact header bar with title and close button."""
 
-    settings_toggled = Signal(bool)
     close_requested = Signal()
 
     def __init__(self, title: str, parent=None):
@@ -43,22 +42,7 @@ class ModuleHeader(QFrame):
 
         layout.addStretch()
 
-        self._settings_btn = QPushButton("⚙")
-        self._settings_btn.setFixedSize(22, 22)
-        self._settings_btn.setToolTip("Settings")
-        self._settings_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                border: none;
-                color: {Colors.TEXT_DIM};
-                font-size: 12pt;
-                padding: 0;
-            }}
-            QPushButton:hover {{ color: {Colors.ACCENT}; }}
-        """)
-        self._settings_btn.clicked.connect(self._toggle_settings)
-        layout.addWidget(self._settings_btn)
-
+        # Close button
         self._close_btn = QPushButton("✕")
         self._close_btn.setFixedSize(22, 22)
         self._close_btn.setToolTip("Remove module")
@@ -75,82 +59,11 @@ class ModuleHeader(QFrame):
         self._close_btn.clicked.connect(self.close_requested.emit)
         layout.addWidget(self._close_btn)
 
-        self._settings_open = False
-
-    def _toggle_settings(self):
-        self._settings_open = not self._settings_open
-        self.settings_toggled.emit(self._settings_open)
-
     def set_title(self, title: str):
         self._title.setText(title)
 
 
-class SettingsPanel(QFrame):
-    """Collapsible settings panel that slides open below the header."""
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("settingsPanel")
-        self.setStyleSheet(f"""
-            #settingsPanel {{
-                background: {Colors.BG_SETTINGS};
-                border-bottom: 1px solid {Colors.BORDER};
-            }}
-        """)
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(8, 6, 8, 6)
-        self._layout.setSpacing(4)
-
-        self.setMaximumHeight(0)
-        self._expanded = False
-
-    def add_row(self, label_text: str, widget: QWidget) -> QWidget:
-        """Add a labeled setting row."""
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        lbl = QLabel(label_text)
-        lbl.setFixedWidth(70)
-        lbl.setStyleSheet(f"color: {Colors.TEXT_DIM}; font-size: 8pt; background: transparent;")
-        row.addWidget(lbl)
-        row.addWidget(widget)
-        self._layout.addLayout(row)
-        return widget
-
-    def add_combo(self, label: str, items: list[str],
-                  default: int = 0) -> QComboBox:
-        """Convenience: add a combo box setting."""
-        combo = QComboBox()
-        combo.addItems(items)
-        combo.setCurrentIndex(default)
-        self.add_row(label, combo)
-        return combo
-
-    def add_slider(self, label: str, min_val: int = 0, max_val: int = 100,
-                   default: int = 50) -> QSlider:
-        """Convenience: add a horizontal slider setting."""
-        slider = QSlider(Qt.Horizontal)
-        slider.setRange(min_val, max_val)
-        slider.setValue(default)
-        self.add_row(label, slider)
-        return slider
-
-    def add_checkbox(self, label: str, checked: bool = False) -> QCheckBox:
-        """Convenience: add a checkbox setting."""
-        cb = QCheckBox()
-        cb.setChecked(checked)
-        self.add_row(label, cb)
-        return cb
-
-    def toggle(self, show: bool):
-        """Animate expand/collapse."""
-        self._expanded = show
-        target_h = self.sizeHint().height() if show else 0
-        anim = QPropertyAnimation(self, b"maximumHeight", self)
-        anim.setDuration(200)
-        anim.setStartValue(self.maximumHeight())
-        anim.setEndValue(target_h)
-        anim.setEasingCurve(QEasingCurve.InOutCubic)
-        anim.start(QPropertyAnimation.DeleteWhenStopped)
 
 
 class RenderCanvas(QWidget):
@@ -162,7 +75,7 @@ class RenderCanvas(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(60)
+        self.setMinimumHeight(30)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
         self._render_func = None
@@ -176,6 +89,7 @@ class RenderCanvas(QWidget):
         if not painter.isActive():
             return
         painter.setRenderHint(QPainter.Antialiasing)
+        
         painter.fillRect(self.rect(), QColor(Colors.BG_MODULE))
         w, h = self.width(), self.height()
         if self._render_func and w > 0 and h > 0:
@@ -192,7 +106,7 @@ class BaseModule(QWidget):
 
     Subclasses must:
       1. Call super().__init__() with a title.
-      2. Override `setup_settings()` to add controls to self.settings.
+      2. Override `build_context_menu(menu)` to add QActions.
       3. Override `on_audio_data(data)` to process incoming audio.
       4. Override `canvas.render(painter, w, h)` via self.canvas for drawing.
     """
@@ -223,17 +137,9 @@ class BaseModule(QWidget):
         self.header.close_requested.connect(lambda: self.close_requested.emit(self))
         layout.addWidget(self.header)
 
-        # Settings panel
-        self.settings = SettingsPanel()
-        self.header.settings_toggled.connect(self.settings.toggle)
-        layout.addWidget(self.settings)
-
         # Render canvas
         self.canvas = RenderCanvas()
         layout.addWidget(self.canvas)
-
-        # Setup settings (subclass hook)
-        self.setup_settings()
 
         # Connect to audio engine
         self.audio_engine.data_ready.connect(self.on_audio_data)
@@ -245,9 +151,48 @@ class BaseModule(QWidget):
         self._refresh_timer.timeout.connect(self.canvas.update)
         self._refresh_timer.start()
 
-    def setup_settings(self):
-        """Override to add settings widgets to self.settings."""
+    def build_context_menu(self, menu):
+        """Override to add QActions to the module's right-click menu."""
         pass
+
+    @staticmethod
+    def draw_text_badge(painter, rect, align, text, text_pen, bg_color=None):
+        """Draws text with a rounded, padded background for readability."""
+        if bg_color is None:
+            bg_color = QColor(0, 0, 0, 150)
+            
+        from PySide6.QtGui import QFontMetrics
+        fm = QFontMetrics(painter.font())
+        if hasattr(rect, 'toRect'):
+            rect = rect.toRect()
+            
+        br = fm.boundingRect(rect, align, text)
+        pad_x, pad_y = 6, 2
+        br.adjust(-pad_x, -pad_y, pad_x, pad_y)
+        
+        painter.save()
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(bg_color)
+        painter.drawRoundedRect(br, 4, 4)
+        
+        painter.setPen(text_pen)
+        painter.drawText(rect, align, text)
+        painter.restore()
+
+    def contextMenuEvent(self, event):
+        """Show settings via right-click."""
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        
+        self.build_context_menu(menu)
+        
+        if not menu.isEmpty():
+            menu.addSeparator()
+            
+        remove_action = menu.addAction("✕ Remove Module")
+        remove_action.triggered.connect(lambda: self.close_requested.emit(self))
+        
+        menu.exec(event.globalPos())
 
     def on_audio_data(self, data: np.ndarray):
         """

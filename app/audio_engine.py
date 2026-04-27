@@ -33,6 +33,7 @@ class AudioEngine(QObject):
         self.block_size = block_size
         self._stream = None
         self._device = None
+        self.gain_multiplier = 1.0
 
         # Thread-safe queue for bridging callback → Qt main thread
         self._queue = queue.Queue(maxsize=200)
@@ -45,7 +46,7 @@ class AudioEngine(QObject):
 
         # Timer to drain the queue on the main thread
         self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(8)  # ~120 Hz polling
+        self._poll_timer.setInterval(16)  # ~60 Hz polling
         self._poll_timer.timeout.connect(self._drain_queue)
 
     # ── Device Enumeration ──────────────────────────────────────────────────
@@ -113,14 +114,13 @@ class AudioEngine(QObject):
                 self.error_occurred.emit(f"Audio error: {e2}")
 
     def stop(self):
-        """Stop the audio stream."""
+        """Stop the audio stream (non-blocking)."""
         self._poll_timer.stop()
         if self._stream is not None:
             try:
-                # Use abort() instead of stop() to prevent hanging the main thread
-                # while waiting for the audio buffer to flush during application exit.
+                # Use abort() instead of stop() or close() to prevent hanging 
+                # the main thread during application exit.
                 self._stream.abort()
-                self._stream.close()
             except Exception:
                 pass
             self._stream = None
@@ -160,22 +160,33 @@ class AudioEngine(QObject):
                 break
 
         for data in blocks:
+            if self.gain_multiplier != 1.0:
+                data = data * self.gain_multiplier
+
             n = len(data)
             buf_len = len(self.buffer)
 
-            # Write to circular buffer
-            end = self._write_pos + n
-            if end <= buf_len:
-                self.buffer[self._write_pos:end] = data
+            # Update circular history buffer
+            if n >= buf_len:
+                self.buffer[:] = data[-buf_len:]
+                self._write_pos = 0
             else:
-                first = buf_len - self._write_pos
-                self.buffer[self._write_pos:] = data[:first]
-                self.buffer[:n - first] = data[first:]
-            self._write_pos = end % buf_len
+                end_pos = self._write_pos + n
+                if end_pos <= buf_len:
+                    self.buffer[self._write_pos:end_pos] = data
+                else:
+                    rem = end_pos - buf_len
+                    first_part = n - rem
+                    self.buffer[self._write_pos:] = data[:first_part]
+                    self.buffer[:rem] = data[first_part:]
+                self._write_pos = (self._write_pos + n) % buf_len
+
             self._total_written += n
 
-            # Emit to all connected modules
-            self.data_ready.emit(data)
+        if blocks:
+            # Concatenate all blocks to prevent event storm when unfocused
+            combined = np.concatenate(blocks)
+            self.data_ready.emit(combined)
 
     # ── Buffer Access ───────────────────────────────────────────────────────
 

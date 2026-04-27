@@ -166,10 +166,10 @@ class MainWindow(QMainWindow):
         self.audio_engine = audio_engine
 
         self.setWindowFlags(
-            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         )
-        self.setAttribute(Qt.WA_TranslucentBackground, False)
-        self.setMinimumSize(160, 120)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setMinimumSize(40, 40)
         self.resize(300, 650)
 
         # Central widget
@@ -187,7 +187,7 @@ class MainWindow(QMainWindow):
         # Module splitter
         self._layout_vertical = True
         self.splitter = QSplitter(Qt.Vertical)
-        self.splitter.setHandleWidth(6)
+        self.splitter.setHandleWidth(4)
         self.splitter.setChildrenCollapsible(False)
         self.splitter.setStyleSheet(f"""
             QSplitter::handle {{
@@ -217,6 +217,8 @@ class MainWindow(QMainWindow):
         self._devices = []
         self._refresh_devices()
 
+        self._show_headers = True
+
         # Default modules
         self.add_module("oscilloscope")
         self.add_module("loudness")
@@ -234,9 +236,10 @@ class MainWindow(QMainWindow):
     # ── Gear Menu (Device + Theme) ──────────────────────────────────────────
 
     def _show_gear_menu(self):
+        from PySide6.QtWidgets import QWidgetAction, QSlider, QHBoxLayout
         menu = QMenu(self)
 
-        # Audio device submenu
+        # Audio device submenu grouped by API
         dev_menu = menu.addMenu("🎤  Audio Device")
         default_action = QAction("Default Input", self)
         default_action.setCheckable(True)
@@ -246,18 +249,59 @@ class MainWindow(QMainWindow):
         dev_menu.addSeparator()
 
         self._refresh_devices()
+        apis = {}
         for d in self._devices:
-            label = f"{d['name']} ({d['hostapi']})"
-            action = QAction(label, self)
-            action.setCheckable(True)
-            action.setChecked(self._current_device == d["index"])
-            idx = d["index"]
-            action.triggered.connect(lambda checked, i=idx: self._select_device(i))
-            dev_menu.addAction(action)
+            apis.setdefault(d["hostapi"], []).append(d)
 
-        # Make the device menu wide enough for long Voicemeeter names
-        dev_menu.setMinimumWidth(380)
+        for api, devs in apis.items():
+            api_menu = dev_menu.addMenu(api)
+            for d in devs:
+                label = d["name"]
+                action = QAction(label, self)
+                action.setCheckable(True)
+                action.setChecked(self._current_device == d["index"])
+                idx = d["index"]
+                action.triggered.connect(lambda checked, i=idx: self._select_device(i))
+                api_menu.addAction(action)
 
+        menu.addSeparator()
+
+        # Overdrive (Gain) slider via QWidgetAction
+        gain_act = QWidgetAction(self)
+        gain_widget = QWidget()
+        gain_layout = QHBoxLayout(gain_widget)
+        gain_layout.setContentsMargins(10, 4, 10, 4)
+        gain_label = QLabel("Input Overdrive:")
+        gain_label.setFixedWidth(90)
+        gain_slider = QSlider(Qt.Horizontal)
+        gain_slider.setRange(0, 150)
+        gain_slider.setValue(int(self.audio_engine.gain_multiplier * 100))
+        gain_slider.setFixedWidth(120)
+        
+        gain_val_label = QLabel(f"{gain_slider.value()}%")
+        gain_val_label.setFixedWidth(30)
+
+        def on_gain_change(v):
+            self.audio_engine.gain_multiplier = v / 100.0
+            gain_val_label.setText(f"{v}%")
+
+        gain_slider.valueChanged.connect(on_gain_change)
+        
+        gain_layout.addWidget(gain_label)
+        gain_layout.addWidget(gain_slider)
+        gain_layout.addWidget(gain_val_label)
+        gain_act.setDefaultWidget(gain_widget)
+        menu.addAction(gain_act)
+
+        menu.addSeparator()
+
+        # UI Settings
+        hdr_action = QAction("Show Module Headers", self)
+        hdr_action.setCheckable(True)
+        hdr_action.setChecked(self._show_headers)
+        hdr_action.triggered.connect(self._toggle_headers)
+        menu.addAction(hdr_action)
+        
         menu.addSeparator()
 
         # Theme submenu
@@ -274,16 +318,42 @@ class MainWindow(QMainWindow):
 
         menu.exec(QCursor.pos())
 
+    def _toggle_headers(self, show: bool):
+        self._show_headers = show
+        for m in self._modules:
+            m.header.setVisible(show)
+
     def _apply_theme(self, name: str):
         apply_theme(name)
         app = QApplication.instance()
         if app:
+            from app.theme import build_stylesheet
             app.setStyleSheet(build_stylesheet())
         # Force repaint on all modules
         self.update()
         for m in self._modules:
+            if hasattr(m, "on_theme_changed"):
+                m.on_theme_changed()
             m.update()
             m.canvas.update()
+        self._update_ghost_mode()
+
+    def _update_ghost_mode(self):
+        from app.theme import current_theme_name
+        if current_theme_name() == "Transparent Ghost":
+            self.title_bar.setVisible(self.underMouse())
+            self._grip.setVisible(self.underMouse())
+        else:
+            self.title_bar.setVisible(True)
+            self._grip.setVisible(True)
+
+    def enterEvent(self, event):
+        self._update_ghost_mode()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._update_ghost_mode()
+        super().leaveEvent(event)
 
     # ── Module Management ───────────────────────────────────────────────────
 
@@ -301,6 +371,10 @@ class MainWindow(QMainWindow):
         cls = MODULE_REGISTRY[module_key]["class"]
         module = cls(self.audio_engine)
         module.close_requested.connect(self.remove_module)
+        
+        # Apply header visibility
+        module.header.setVisible(self._show_headers)
+        
         self.splitter.addWidget(module)
         self._modules.append(module)
 
@@ -378,7 +452,12 @@ class MainWindow(QMainWindow):
         self._show_gear_menu()
 
     def closeEvent(self, event):
-        for m in self._modules:
-            m.cleanup()
+        """Handle application exit: Try clean quit, fallback to force-kill if hung."""
         self.audio_engine.stop()
-        super().closeEvent(event)
+        event.accept()
+        QApplication.instance().quit()
+        
+        # Safety fallback: if the process is still alive in 500ms, force it out.
+        # This prevents the 'cmd hang' while allowing for a cleaner exit.
+        import os
+        QTimer.singleShot(500, lambda: os._exit(0))

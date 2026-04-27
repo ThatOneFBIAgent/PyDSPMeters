@@ -32,17 +32,45 @@ class VUMeterModule(BaseModule):
         super().__init__(audio_engine, title="VU Meter", parent=parent)
         self.canvas.set_render_func(self._render)
 
-    def setup_settings(self):
-        c = self.settings.add_combo("Style", ["Style 1", "Style 2"], 0)
-        c.currentIndexChanged.connect(lambda i: setattr(self, "_style", i))
-        c = self.settings.add_combo("Channel", ["Left", "Right", "Mid", "Side"], 0)
-        c.currentTextChanged.connect(lambda t: setattr(self, "_channel", t))
-        s = self.settings.add_slider("Cal (dB)", -20, 20, 0)
-        s.valueChanged.connect(lambda v: setattr(self, "_cal_offset", float(v)))
-        self.settings.add_checkbox("Peak LED", True).toggled.connect(
-            lambda v: setattr(self, "_show_peak", v))
-        self.settings.add_checkbox("Clip LED", True).toggled.connect(
-            lambda v: setattr(self, "_show_clip", v))
+    def build_context_menu(self, menu):
+        from PySide6.QtGui import QActionGroup
+        
+        sm = menu.addMenu("Style")
+        sg = QActionGroup(self)
+        for i, s in enumerate(["Style 1", "Style 2"]):
+            a = sm.addAction(s)
+            a.setCheckable(True)
+            a.setChecked(i == self._style)
+            a.triggered.connect(lambda checked, idx=i: setattr(self, "_style", idx))
+            sg.addAction(a)
+            
+        cm = menu.addMenu("Channel")
+        cg = QActionGroup(self)
+        for c in ["Left", "Right", "Mid", "Side"]:
+            a = cm.addAction(c)
+            a.setCheckable(True)
+            a.setChecked(c == self._channel)
+            a.triggered.connect(lambda checked, t=c: setattr(self, "_channel", t))
+            cg.addAction(a)
+
+        calm = menu.addMenu("Cal (dB)")
+        calg = QActionGroup(self)
+        for c in [-20, -10, 0, 10, 20]:
+            a = calm.addAction(str(c))
+            a.setCheckable(True)
+            a.setChecked(abs(c - self._cal_offset) < 0.1)
+            a.triggered.connect(lambda checked, v=c: setattr(self, "_cal_offset", float(v)))
+            calg.addAction(a)
+            
+        a = menu.addAction("Peak LED")
+        a.setCheckable(True)
+        a.setChecked(self._show_peak)
+        a.triggered.connect(lambda checked: setattr(self, "_show_peak", checked))
+
+        a = menu.addAction("Clip LED")
+        a.setCheckable(True)
+        a.setChecked(self._show_clip)
+        a.triggered.connect(lambda checked: setattr(self, "_show_clip", checked))
 
     def on_audio_data(self, data: np.ndarray):
         l, r = data[:, 0], data[:, 1] if data.shape[1] > 1 else data[:, 0]
