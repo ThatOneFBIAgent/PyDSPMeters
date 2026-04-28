@@ -1,0 +1,72 @@
+{
+    "window": {
+        "x": 447,
+        "y": 0,
+        "width": 1472,
+        "height": 133,
+        "vertical_layout": false,
+        "show_headers": false,
+        "divider_width": 1,
+        "divider_opacity": 86
+    },
+    "audio": {
+        "device_index": 9,
+        "gain": 1.0,
+        "channels": 2
+    },
+    "ui": {
+        "theme": "Ember",
+        "text_scale": 0.81,
+        "color_overrides": {}
+    },
+    "modules": [
+        {
+            "key": "loudness",
+            "config": {
+                "mode": "LUFS",
+                "orientation": "Vertical",
+                "show_momentary": false,
+                "show_shortterm": true,
+                "show_peak": true,
+                "show_all_channels": true,
+                "color_theme": "Classic"
+            }
+        },
+        {
+            "key": "spectrum",
+            "config": {
+                "fft_size": 4096,
+                "scale": "logarithmic",
+                "mode": "FFT",
+                "channel": "Left",
+                "smoothing": 0.85,
+                "show_note": false,
+                "show_floating_note": false,
+                "speed": 1.0
+            }
+        },
+        {
+            "key": "oscilloscope",
+            "config": {
+                "display_samples": 2048,
+                "channel": "L+R"
+            }
+        },
+        {
+            "key": "vu_meter",
+            "config": {
+                "channel": "L+R",
+                "cal_offset": 0.0,
+                "style": 0,
+                "show_peak": true,
+                "show_clip": true
+            }
+        }
+    ],
+    "splitter_sizes": [
+        82,
+        496,
+        519,
+        366
+    ]
+}

@@ -27,8 +27,25 @@ class StereometerModule(BaseModule):
         self._corr = 0.0
         self._mb_corr = {"low": 0.0, "mid": 0.0, "high": 0.0, "overall": 0.0}
         self._multiband = MultiBandFilter(sample_rate=audio_engine.sample_rate)
+        self.module_key = "stereometer"
         super().__init__(audio_engine, title="Stereometer", parent=parent)
         self.canvas.set_render_func(self._render)
+
+    def get_settings(self):
+        return {
+            "display_mode": self._display_mode,
+            "color_mode": self._color_mode,
+            "corr_mode": self._corr_mode,
+            "minimal_mode": self._minimal_mode,
+            "halved_view": self._halved_view
+        }
+
+    def apply_settings(self, settings):
+        self._display_mode = settings.get("display_mode", self._display_mode)
+        self._color_mode = settings.get("color_mode", self._color_mode)
+        self._corr_mode = settings.get("corr_mode", self._corr_mode)
+        self._minimal_mode = settings.get("minimal_mode", self._minimal_mode)
+        self._halved_view = settings.get("halved_view", self._halved_view)
 
     def build_context_menu(self, menu):
         from PySide6.QtGui import QActionGroup

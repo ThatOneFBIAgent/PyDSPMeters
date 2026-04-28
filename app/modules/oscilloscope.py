@@ -15,12 +15,23 @@ from app.theme import Colors
 class OscilloscopeModule(BaseModule):
 
     def __init__(self, audio_engine, parent=None):
-        self._waveform_l = np.zeros(4096, dtype=np.float32)
-        self._waveform_r = np.zeros(4096, dtype=np.float32)
+        self._waveform_l = np.zeros(8192, dtype=np.float32)
+        self._waveform_r = np.zeros(8192, dtype=np.float32)
         self._display_samples = 1024
         self._channel = "L+R"
+        self.module_key = "oscilloscope"
         super().__init__(audio_engine, title="Oscilloscope", parent=parent)
         self.canvas.set_render_func(self._render)
+
+    def get_settings(self):
+        return {
+            "display_samples": self._display_samples,
+            "channel": self._channel
+        }
+
+    def apply_settings(self, settings):
+        self._display_samples = settings.get("display_samples", self._display_samples)
+        self._channel = settings.get("channel", self._channel)
 
     def build_context_menu(self, menu):
         from PySide6.QtGui import QActionGroup
@@ -35,7 +46,7 @@ class OscilloscopeModule(BaseModule):
 
         zm = menu.addMenu("Zoom Samples")
         zg = QActionGroup(self)
-        for z in [256, 512, 1024, 2048, 4096]:
+        for z in [256, 512, 1024, 2048, 4096, 8192]:
             a = zm.addAction(str(z))
             a.setCheckable(True)
             a.setChecked(z == self._display_samples)
@@ -60,9 +71,15 @@ class OscilloscopeModule(BaseModule):
             self._waveform_r[-n:] = r
 
     def _find_trigger(self, data):
-        for i in range(1, len(data) - self._display_samples):
-            if data[i - 1] <= 0 < data[i]:
-                return i
+        # Use NumPy for faster zero-crossing detection
+        search_limit = len(data) - self._display_samples
+        if search_limit <= 0: return 0
+        
+        # Look for zero crossing in the first half of the buffer
+        subset = data[:search_limit]
+        crossings = np.where((subset[:-1] <= 0) & (subset[1:] > 0))[0]
+        if len(crossings) > 0:
+            return crossings[0]
         return 0
 
     def _get_channels(self):
@@ -92,16 +109,27 @@ class OscilloscopeModule(BaseModule):
             seg = ch[trig:trig + self._display_samples]
             if len(seg) < 2:
                 continue
-            path = QPainterPath()
-            for i, s in enumerate(seg):
-                x = i / len(seg) * w
-                y = mid_y - s * h * 0.4
-                if i == 0: path.moveTo(x, y)
-                else: path.lineTo(x, y)
+            
+            # Ultra-Performance Optimization: 
+            # Downsample exactly to pixel width using NumPy
+            num_points = min(len(seg), int(w))
+            if num_points < 2: continue
+            
+            indices = np.linspace(0, len(seg) - 1, num_points).astype(np.int32)
+            downsampled = seg[indices]
+            
+            # Map to screen coordinates
+            x_coords = np.linspace(0, w, num_points)
+            y_coords = mid_y - downsampled * h * 0.4
+            
+            from PySide6.QtCore import QPointF
+            points = [QPointF(x_coords[i], y_coords[i]) for i in range(num_points)]
+            
             # Glow
             gc = QColor(colors[idx % 2]); gc.setAlpha(40)
             painter.setPen(QPen(gc, 3.0))
-            painter.drawPath(path)
-            # Line
+            painter.drawPolyline(points)
+            
+            # Main Line
             painter.setPen(QPen(QColor(colors[idx % 2]), 1.5))
-            painter.drawPath(path)
+            painter.drawPolyline(points)

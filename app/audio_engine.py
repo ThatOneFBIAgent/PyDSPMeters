@@ -18,7 +18,7 @@ class AudioEngine(QObject):
     Also maintains a circular buffer for modules that need history (e.g. LUFS).
     """
 
-    # Emits (np.ndarray) of shape (block_size, 2), float32
+    # Emits (np.ndarray) of shape (block_size, channels), float32
     data_ready = Signal(np.ndarray)
     # Emits when the stream starts/stops
     stream_started = Signal()
@@ -27,10 +27,11 @@ class AudioEngine(QObject):
     error_occurred = Signal(str)
 
     def __init__(self, sample_rate: int = 44100, block_size: int = 1024,
-                 buffer_seconds: float = 10.0, parent=None):
+                 buffer_seconds: float = 10.0, channels: int = 2, parent=None):
         super().__init__(parent)
         self.sample_rate = sample_rate
         self.block_size = block_size
+        self.channels = channels
         self._stream = None
         self._device = None
         self.gain_multiplier = 1.0
@@ -40,7 +41,7 @@ class AudioEngine(QObject):
 
         # Circular history buffer
         buf_len = int(sample_rate * buffer_seconds)
-        self.buffer = np.zeros((buf_len, 2), dtype=np.float32)
+        self.buffer = np.zeros((buf_len, self.channels), dtype=np.float32)
         self._write_pos = 0
         self._total_written = 0
 
@@ -77,15 +78,22 @@ class AudioEngine(QObject):
 
     # ── Stream Control ──────────────────────────────────────────────────────
 
-    def start(self, device_index: int | None = None):
+    def start(self, device_index: int | None = None, channels: int | None = None):
         """Start capturing audio from the given device."""
         self.stop()
         self._device = device_index
+        if channels is not None:
+            self.channels = channels
+            # Recreate buffer if channel count changed
+            buf_len = len(self.buffer)
+            self.buffer = np.zeros((buf_len, self.channels), dtype=np.float32)
+            self._write_pos = 0
+            self._total_written = 0
 
         try:
             self._stream = sd.InputStream(
                 device=device_index,
-                channels=2,
+                channels=self.channels,
                 samplerate=self.sample_rate,
                 blocksize=self.block_size,
                 dtype="float32",
@@ -140,10 +148,10 @@ class AudioEngine(QObject):
             pass  # Drop oldest if queue full
 
     def _audio_callback_mono(self, indata, frames, time_info, status):
-        """Sounddevice callback for mono input — duplicated to stereo."""
-        stereo = np.column_stack([indata[:, 0], indata[:, 0]])
+        """Sounddevice callback for mono input — duplicated to target channels."""
+        multi = np.tile(indata[:, 0:1], (1, self.channels))
         try:
-            self._queue.put_nowait(stereo)
+            self._queue.put_nowait(multi)
         except queue.Full:
             pass
 
@@ -207,12 +215,12 @@ class AudioEngine(QObject):
         Get the last N seconds of audio from the circular buffer.
 
         Returns:
-            Array of shape (n_samples, 2), float32.
+            Array of shape (n_samples, channels), float32.
         """
         n_samples = min(int(seconds * self.sample_rate), len(self.buffer))
         available = min(n_samples, self._total_written)
         if available == 0:
-            return np.zeros((1, 2), dtype=np.float32)
+            return np.zeros((1, self.channels), dtype=np.float32)
 
         end = self._write_pos
         if end >= available:

@@ -211,8 +211,16 @@ class BaseModule(QWidget):
     def on_audio_data(self, data: np.ndarray):
         """
         Override to process incoming audio data.
-        Called on the main thread with shape (block_size, 2).
+        Called on the main thread with shape (block_size, channels).
         """
+        pass
+
+    def get_settings(self) -> dict:
+        """Override to return a dict of settings to persist."""
+        return {}
+
+    def apply_settings(self, settings: dict):
+        """Override to apply persisted settings."""
         pass
 
     def cleanup(self):

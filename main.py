@@ -30,12 +30,9 @@ def main():
     # Create audio engine
     engine = AudioEngine(sample_rate=44100, block_size=1024)
 
-    # Create main window
+    # Create main window (handles loading settings and starting engine)
     window = MainWindow(engine)
     window.show()
-
-    # Start audio capture with default device
-    engine.start()
 
     sys.exit(app.exec())
 

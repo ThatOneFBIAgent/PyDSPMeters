@@ -43,18 +43,43 @@ class SpectrogramModule(BaseModule):
         self._show_piano = False
         self._show_freq = True
         self._loop = False
-        self._display_h = 128  # Reduced for performance
-        self._history_len = 400
+        self._display_h = 256
+        self._history_len = 512
         self._history = np.zeros((self._history_len, self._display_h), dtype=np.float32)
         self._col_idx = 0
         self._lut = _build_colormap(Colors.HEATMAP_STOPS)
         self._img_cache = None  # Keep reference for QImage data
-        self._frame_skip = 0
+        self._speed = 1.0
+        self.module_key = "spectrogram"
         super().__init__(audio_engine, title="Spectrogram", parent=parent)
         self.canvas.set_render_func(self._render)
 
     def on_theme_changed(self):
         self._lut = _build_colormap(Colors.HEATMAP_STOPS)
+
+    def get_settings(self):
+        return {
+            "fft_size": self._fft_size,
+            "scale": self._scale,
+            "orientation": self._orientation,
+            "tilt": self._tilt,
+            "mode": self._mode,
+            "show_piano": self._show_piano,
+            "show_freq": self._show_freq,
+            "speed": self._speed
+        }
+
+    def apply_settings(self, settings):
+        self._fft_size = settings.get("fft_size", self._fft_size)
+        self._scale = settings.get("scale", self._scale)
+        self._orientation = settings.get("orientation", self._orientation)
+        self._tilt = float(settings.get("tilt", self._tilt))
+        self._mode = settings.get("mode", self._mode)
+        self._show_piano = settings.get("show_piano", self._show_piano)
+        self._show_freq = settings.get("show_freq", self._show_freq)
+        self._speed = float(settings.get("speed", self._speed))
+        # Re-initialize history if FFT size changed
+        self._set_fft(self._fft_size)
 
     def build_context_menu(self, menu):
         from PySide6.QtGui import QActionGroup
@@ -113,6 +138,15 @@ class SpectrogramModule(BaseModule):
         a.setCheckable(True)
         a.setChecked(self._show_freq)
         a.triggered.connect(lambda checked: setattr(self, "_show_freq", checked))
+        
+        sm = menu.addMenu("Speed")
+        sg = QActionGroup(self)
+        for s in [1, 2, 4, 8]:
+            a = sm.addAction(f"{s}x")
+            a.setCheckable(True)
+            a.setChecked(int(self._speed) == s)
+            a.triggered.connect(lambda checked, v=s: setattr(self, "_speed", float(v)))
+            sg.addAction(a)
 
     def _set_fft(self, size):
         self._fft_size = size
@@ -126,36 +160,53 @@ class SpectrogramModule(BaseModule):
 
     def on_audio_data(self, data: np.ndarray):
         sig = (data[:, 0] + data[:, 1]) * 0.5 if data.shape[1] > 1 else data[:, 0]
-        mag = compute_fft(sig, self._fft_size, window=self._get_window())
-
-        if abs(self._tilt) > 0.1:
-            n = len(mag)
-            mag = mag + np.linspace(-self._tilt, self._tilt, n)
-
-        db_min, db_max = -90.0, 0.0
-        norm = np.clip((mag - db_min) / (db_max - db_min), 0, 1)
-
-        # Map FFT bins to display bins using frequency scale
-        freqs = fft_frequencies(self._fft_size, self.audio_engine.sample_rate)
-        n_bins = min(len(norm), len(freqs))
-        px = map_frequencies_to_pixels(freqs[:n_bins], self._display_h, self._scale)
-
-        column = np.zeros(self._display_h, dtype=np.float32)
-        px_int = np.clip(px.astype(np.int32), 0, self._display_h - 1)
-        # Use numpy advanced indexing for speed
-        np.maximum.at(column, px_int[:n_bins], norm[:n_bins])
         
-        # Fill gaps in the column (especially at the low end where bins are sparse)
-        nonzero = np.where(column > 0)[0]
-        if len(nonzero) > 1:
-            from scipy.interpolate import interp1d
-            f = interp1d(nonzero, column[nonzero], kind='linear', fill_value="nearest")
-            full_idx = np.arange(nonzero[0], nonzero[-1] + 1)
-            column[full_idx] = np.maximum(column[full_idx], f(full_idx))
+        # Calculate number of sub-steps based on speed
+        # Speed 1.0 = 1 step per block
+        # Speed 2.0 = 2 steps (50% overlap)
+        n_steps = int(self._speed)
+        step_size = len(sig) // n_steps
+        
+        db_min, db_max = -90.0, 0.0
+        freqs = fft_frequencies(self._fft_size, self.audio_engine.sample_rate)
+        n_bins = min(self._fft_size // 2, len(freqs))
+        px = map_frequencies_to_pixels(freqs[:n_bins], self._display_h, self._scale)
+        px_int = np.clip(px.astype(np.int32), 0, self._display_h - 1)
+        
+        for s in range(n_steps):
+            start = s * step_size
+            end = start + self._fft_size
+            
+            # If we don't have enough data for a full FFT at this step, 
+            # we might need to pad or skip. 
+            # For simplicity, we'll use a sliding window over the current block.
+            if start + self._fft_size > len(sig):
+                # Fallback to just the end of the block
+                chunk = sig[-self._fft_size:]
+            else:
+                chunk = sig[start:end]
+                
+            mag = compute_fft(chunk, self._fft_size, window=self._get_window())
 
-        idx = self._col_idx % self._history_len
-        self._history[idx] = column
-        self._col_idx += 1
+            if abs(self._tilt) > 0.1:
+                mag = mag + np.linspace(-self._tilt, self._tilt, len(mag))
+
+            norm = np.clip((mag - db_min) / (db_max - db_min), 0, 1)
+
+            column = np.zeros(self._display_h, dtype=np.float32)
+            np.maximum.at(column, px_int[:n_bins], norm[:n_bins])
+            
+            # Interpolation to fill gaps
+            nonzero = np.where(column > 0)[0]
+            if len(nonzero) > 1:
+                from scipy.interpolate import interp1d
+                f = interp1d(nonzero, column[nonzero], kind='linear', fill_value="nearest")
+                full_idx = np.arange(nonzero[0], nonzero[-1] + 1)
+                column[full_idx] = np.maximum(column[full_idx], f(full_idx))
+
+            idx = self._col_idx % self._history_len
+            self._history[idx] = column
+            self._col_idx += 1
 
     def _render(self, painter, w, h):
         if self._col_idx < 1:

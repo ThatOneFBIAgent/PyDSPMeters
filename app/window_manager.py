@@ -3,6 +3,8 @@ Window Manager: Main application window with compact title bar,
 module management, snapping logic, and theme switching.
 """
 
+import math
+import time
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QMenu, QComboBox, QPushButton, QLabel, QFrame, QApplication,
@@ -18,10 +20,63 @@ from app.theme import (
 from app.audio_engine import AudioEngine
 from app.base_module import BaseModule
 from app.modules import MODULE_REGISTRY
+from app.settings import SettingsManager
 
 # Ensure all modules register themselves
 from app.modules import oscilloscope, loudness_meter, vu_meter  # noqa
 from app.modules import stereometer, spectrum, spectrogram, waveform  # noqa
+
+
+class LoadingOverlay(QWidget):
+    """Professional splash overlay with animation."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._opacity = 1.0
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self.update)
+        self._timer.start(16)
+        self._start_time = QTimer.singleShot(0, lambda: None) # Placeholder
+        import time
+        self._birth = time.time()
+
+    def paintEvent(self, event):
+        from PySide6.QtGui import QPainter
+        with QPainter(self) as p:
+            p.setRenderHint(QPainter.Antialiasing)
+            
+            # Background
+            bg = QColor(Colors.BG_DARKEST)
+            bg.setAlpha(int(255 * self._opacity))
+            p.fillRect(self.rect(), bg)
+            
+            # Pulsing Logo
+            pulse = (math.sin((time.time() - self._birth) * 5) + 1) * 0.5
+            text_col = QColor(Colors.ACCENT)
+            text_col.setAlpha(int((150 + 105 * pulse) * self._opacity))
+            
+            p.setPen(text_col)
+            f = Fonts.header()
+            f.setPointSize(24)
+            p.setFont(f)
+            p.drawText(self.rect(), Qt.AlignCenter, "PYDSPMETERS")
+            
+            f.setPointSize(10)
+            p.setFont(f)
+            p.setPen(QColor(Colors.TEXT_DIM))
+            p.drawText(self.rect().adjusted(0, 50, 0, 50), Qt.AlignCenter, "INITIALIZING ENGINE...")
+
+    def fade_out(self):
+        self._fade_timer = QTimer(self)
+        def step():
+            self._opacity -= 0.05
+            if self._opacity <= 0:
+                self._fade_timer.stop()
+                self.hide()
+                self.deleteLater()
+            self.update()
+        self._fade_timer.timeout.connect(step)
+        self._fade_timer.start(20)
 
 
 # ── Compact icon-style button ───────────────────────────────────────────────
@@ -147,8 +202,8 @@ class ResizeGrip(QWidget):
             delta = event.globalPosition().toPoint() - self._drag_pos
             self._drag_pos = event.globalPosition().toPoint()
             self._window.resize(
-                max(160, self._window.width() + delta.x()),
-                max(120, self._window.height() + delta.y()),
+                max(60, self._window.width() + delta.x()),
+                max(40, self._window.height() + delta.y()),
             )
             self._window.snap_to_edge()
 
@@ -171,6 +226,13 @@ class MainWindow(QMainWindow):
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setMinimumSize(40, 40)
         self.resize(300, 650)
+        self._loading_settings = True
+        
+        # Loading Overlay
+        self._loading_overlay = LoadingOverlay(self)
+        self._loading_overlay.resize(self.size())
+        self._loading_overlay.raise_()
+        self._loading_overlay.show()
 
         # Central widget
         central = QWidget()
@@ -187,6 +249,7 @@ class MainWindow(QMainWindow):
         # Module splitter
         self._layout_vertical = True
         self.splitter = QSplitter(Qt.Vertical)
+        self.splitter.setVisible(False) # Hide until loaded to prevent flash
         self.splitter.setHandleWidth(4)
         self.splitter.setChildrenCollapsible(False)
         self.splitter.setStyleSheet(f"""
@@ -212,17 +275,78 @@ class MainWindow(QMainWindow):
         self.title_bar.layout_btn.clicked.connect(self._toggle_layout)
         self.title_bar.gear_btn.clicked.connect(self._show_gear_menu)
 
-        # Track current device
-        self._current_device = None
-        self._devices = []
-        self._refresh_devices()
+        # Load settings
+        self._settings = SettingsManager.load()
+        
+        # Apply window settings
+        win_s = self._settings.get("window", {})
+        if "width" in win_s and "height" in win_s:
+            self.resize(win_s["width"], win_s["height"])
+        if "x" in win_s and "y" in win_s:
+            self.move(win_s["x"], win_s["y"])
+        
+        self._layout_vertical = win_s.get("vertical_layout", True)
+        if not self._layout_vertical:
+            self.splitter.setOrientation(Qt.Horizontal)
+            self.title_bar.layout_btn.setText("▤")
+        
+        # Apply UI settings
+        ui_s = self._settings.get("ui", {})
+        Fonts.TEXT_SCALE = ui_s.get("text_scale", 1.0)
+        initial_theme = ui_s.get("theme", "Midnight")
+        apply_theme(initial_theme, ui_s.get("color_overrides", {}))
+        self.setStyleSheet(build_stylesheet())
+        
+        self._show_headers = win_s.get("show_headers", True)
+        
+        # Divider settings (must be after apply_theme to use correct BORDER color)
+        self.splitter.setHandleWidth(win_s.get("divider_width", 4))
+        self._set_divider_opacity(win_s.get("divider_opacity", 100))
 
-        self._show_headers = True
+        # Audio settings
+        audio_s = self._settings.get("audio", {})
+        self.audio_engine.gain_multiplier = audio_s.get("gain", 1.0)
+        self.audio_engine.channels = audio_s.get("channels", 2)
+        self._current_device = audio_s.get("device_index")
+        
+        # Modules
+        module_items = self._settings.get("modules")
+        if module_items is None:
+            module_items = ["oscilloscope", "loudness", "spectrum"]
+            
+        for item in module_items:
+            if isinstance(item, str):
+                self.add_module(item)
+            else:
+                self.add_module(item.get("key"), item.get("config", {}))
+            
+        # Splitter sizes (applied with a small delay to ensure geometry is ready)
+        if "splitter_sizes" in self._settings:
+            sizes = self._settings["splitter_sizes"]
+            
+            def finalize_load():
+                self.splitter.setSizes(sizes)
+                self.splitter.setVisible(True)
+                self._loading_settings = False
+                if hasattr(self, "_loading_overlay"):
+                    self._loading_overlay.fade_out()
+                    
+            QTimer.singleShot(250, finalize_load)
+        else:
+            self._loading_settings = False
+            QTimer.singleShot(250, lambda: self._loading_overlay.fade_out() if hasattr(self, "_loading_overlay") else None)
 
-        # Default modules
-        self.add_module("oscilloscope")
-        self.add_module("loudness")
-        self.add_module("spectrum")
+        if self._current_device is not None:
+            # Refresh devices to check if saved index is still valid
+            self._refresh_devices()
+            valid = any(d["index"] == self._current_device for d in self._devices)
+            if valid:
+                self.audio_engine.start(self._current_device)
+            else:
+                self._current_device = None
+                self.audio_engine.start(None)
+        else:
+            self.audio_engine.start(None)
 
     # ── Device Management ───────────────────────────────────────────────────
 
@@ -232,6 +356,15 @@ class MainWindow(QMainWindow):
     def _select_device(self, device_index):
         self._current_device = device_index
         self.audio_engine.start(device_index)
+
+    def _select_channels(self, count):
+        self.audio_engine.channels = count
+        self.audio_engine.start(self._current_device, count)
+        # Refresh all modules to adapt to new channel count
+        for m in self._modules:
+            if hasattr(m, "on_channels_changed"):
+                m.on_channels_changed()
+            m.update()
 
     # ── Gear Menu (Device + Theme) ──────────────────────────────────────────
 
@@ -249,6 +382,18 @@ class MainWindow(QMainWindow):
         dev_menu.addSeparator()
 
         self._refresh_devices()
+        
+        # Channel count selection
+        chan_menu = menu.addMenu("🔢  Channels")
+        for c in [1, 2, 4, 6, 8]:
+            action = QAction(f"{c} Channel{'s' if c > 1 else ''}", self)
+            action.setCheckable(True)
+            action.setChecked(self.audio_engine.channels == c)
+            action.triggered.connect(lambda checked, count=c: self._select_channels(count))
+            chan_menu.addAction(action)
+            
+        menu.addSeparator()
+
         apis = {}
         for d in self._devices:
             apis.setdefault(d["hostapi"], []).append(d)
@@ -365,6 +510,42 @@ class MainWindow(QMainWindow):
             )
             theme_menu.addAction(action)
 
+        menu.addSeparator()
+        
+        # Divider Settings
+        div_menu = menu.addMenu("📏  Divider Settings")
+        
+        # Width
+        w_act = QWidgetAction(self)
+        w_widget = QWidget()
+        w_layout = QHBoxLayout(w_widget)
+        w_label = QLabel("Width:")
+        w_label.setFixedWidth(60)
+        w_slider = QSlider(Qt.Horizontal)
+        w_slider.setRange(0, 12)
+        w_slider.setValue(self.splitter.handleWidth())
+        w_slider.valueChanged.connect(self._set_divider_width)
+        w_layout.addWidget(w_label)
+        w_layout.addWidget(w_slider)
+        w_act.setDefaultWidget(w_widget)
+        div_menu.addAction(w_act)
+        
+        # Visibility (Opacity)
+        o_act = QWidgetAction(self)
+        o_widget = QWidget()
+        o_layout = QHBoxLayout(o_widget)
+        o_label = QLabel("Opacity:")
+        o_label.setFixedWidth(60)
+        o_slider = QSlider(Qt.Horizontal)
+        o_slider.setRange(0, 100)
+        # We'll simulate this by setting stylesheet handle color
+        o_slider.setValue(self._settings.get("window", {}).get("divider_opacity", 100))
+        o_slider.valueChanged.connect(self._set_divider_opacity)
+        o_layout.addWidget(o_label)
+        o_layout.addWidget(o_slider)
+        o_act.setDefaultWidget(o_widget)
+        div_menu.addAction(o_act)
+
         menu.exec(QCursor.pos())
 
     def _toggle_headers(self, show: bool):
@@ -373,7 +554,7 @@ class MainWindow(QMainWindow):
             m.header.setVisible(show)
 
     def _apply_theme(self, name: str):
-        apply_theme(name)
+        apply_theme(name, self._settings.get("ui", {}).get("color_overrides", {}))
         app = QApplication.instance()
         if app:
             from app.theme import build_stylesheet
@@ -386,10 +567,48 @@ class MainWindow(QMainWindow):
             m.update()
             m.canvas.update()
         self._update_ghost_mode()
+        self._set_divider_opacity(self._settings.get("window", {}).get("divider_opacity", 100))
+
+    def _set_divider_width(self, w):
+        self.splitter.setHandleWidth(w)
+        
+    def _set_divider_opacity(self, alpha_pct):
+        # Update settings for persistence
+        win_s = self._settings.setdefault("window", {})
+        win_s["divider_opacity"] = alpha_pct
+        
+        # Generate handle color with alpha
+        c = QColor(Colors.BORDER)
+        c.setAlpha(int(255 * alpha_pct / 100))
+        color_str = f"rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()})"
+        
+        h_c = QColor(Colors.ACCENT)
+        h_c.setAlpha(int(255 * alpha_pct / 100))
+        hover_str = f"rgba({h_c.red()}, {h_c.green()}, {h_c.blue()}, {h_c.alpha()})"
+
+        if self._layout_vertical:
+            margin = "1px 30px"
+        else:
+            margin = "30px 1px"
+            
+        self.splitter.setStyleSheet(f"""
+            QSplitter::handle {{
+                background: {color_str};
+                border-radius: 2px;
+                margin: {margin};
+            }}
+            QSplitter::handle:hover {{
+                background: {hover_str};
+            }}
+        """)
 
     def _update_ghost_mode(self):
         from app.theme import current_theme_name
-        if current_theme_name() == "Transparent Ghost":
+        theme = current_theme_name()
+        # Themes that need mouse-over for title bar / grip visibility
+        is_transparent = theme in ["Transparent Ghost", "Glass"]
+        
+        if is_transparent:
             self.title_bar.setVisible(self.underMouse())
             self._grip.setVisible(self.underMouse())
         else:
@@ -414,19 +633,48 @@ class MainWindow(QMainWindow):
             menu.addAction(action)
         menu.exec(QCursor.pos())
 
-    def add_module(self, module_key: str):
+    def add_module(self, module_key: str, config: dict = None):
         if module_key not in MODULE_REGISTRY:
             return
         cls = MODULE_REGISTRY[module_key]["class"]
         module = cls(self.audio_engine)
+        module.module_key = module_key # Store for saving
         module.close_requested.connect(self.remove_module)
         module.move_requested.connect(self._move_module)
         
+        if config:
+            module.apply_settings(config)
+            
         # Apply header visibility
         module.header.setVisible(self._show_headers)
         
         self.splitter.addWidget(module)
         self._modules.append(module)
+        
+        # Ensure new module is visible
+        if self._loading_settings:
+            return # Don't redistribute while loading, we'll set sizes once at the end
+            
+        sizes = self.splitter.sizes()
+        if len(sizes) > 1:
+            total = sum(sizes)
+            if total > 0:
+                # Manual add: Try to give new module a fair share without flattening everyone
+                # We give the new module 1/Nth of the space, and reduce others proportionally
+                new_share = total // len(sizes)
+                remaining = total - new_share
+                old_total = sum(sizes[:-1])
+                if old_total > 0:
+                    new_sizes = [int(s * remaining / old_total) for s in sizes[:-1]]
+                    new_sizes.append(new_share)
+                    # Adjust for rounding errors
+                    diff = total - sum(new_sizes)
+                    new_sizes[0] += diff
+                    self.splitter.setSizes(new_sizes)
+                else:
+                    self.splitter.setSizes([total // len(sizes)] * len(sizes))
+            else:
+                self.splitter.setSizes([100] * len(sizes))
 
     def remove_module(self, module: BaseModule):
         if module in self._modules:
@@ -504,17 +752,45 @@ class MainWindow(QMainWindow):
             self.width() - self._grip.width() - 2,
             self.height() - self._grip.height() - 2,
         )
+        if hasattr(self, "_loading_overlay") and self._loading_overlay.isVisible():
+            self._loading_overlay.resize(self.size())
 
     def contextMenuEvent(self, event):
         self._show_gear_menu()
 
     def closeEvent(self, event):
-        """Handle application exit: Try clean quit, fallback to force-kill if hung."""
+        """Handle application exit: Save settings and try clean quit."""
+        # Prepare settings for saving
+        settings = {
+            "window": {
+                "x": self.pos().x(),
+                "y": self.pos().y(),
+                "width": self.width(),
+                "height": self.height(),
+                "vertical_layout": self._layout_vertical,
+                "show_headers": self._show_headers,
+                "divider_width": self.splitter.handleWidth(),
+                "divider_opacity": self._settings.get("window", {}).get("divider_opacity", 100)
+            },
+            "audio": {
+                "device_index": self._current_device,
+                "gain": self.audio_engine.gain_multiplier,
+                "channels": self.audio_engine.channels
+            },
+            "ui": {
+                "theme": current_theme_name(),
+                "text_scale": Fonts.TEXT_SCALE,
+                "color_overrides": self._settings.get("ui", {}).get("color_overrides", {})
+            },
+            "modules": [{"key": m.module_key, "config": m.get_settings()} for m in self._modules],
+            "splitter_sizes": self.splitter.sizes()
+        }
+        SettingsManager.save(settings)
+
         self.audio_engine.stop()
         event.accept()
         QApplication.instance().quit()
         
         # Safety fallback: if the process is still alive in 500ms, force it out.
-        # This prevents the 'cmd hang' while allowing for a cleaner exit.
         import os
         QTimer.singleShot(500, lambda: os._exit(0))

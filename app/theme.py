@@ -85,6 +85,37 @@ THEME_PRESETS = {
             (0.85, "#cc4400"), (1.00, "#ff0000")
         ]
     },
+    "Slate": {
+        "BG_DARKEST": "#1a1b26", "BG_DARK": "#24283b", "BG_MODULE": "#2f354a",
+        "BG_HEADER": "#3b4261", "BG_SETTINGS": "#414868", "BG_INPUT": "#1a1b26",
+        "BORDER": "#565f89", "BORDER_ACCENT": "#7aa2f7",
+        "ACCENT": "#7aa2f7", "ACCENT_DIM": "#2ac3de",
+        "ACCENT_PURPLE": "#bb9af7", "ACCENT_PINK": "#f7768e",
+        "TEXT": "#c0caf5", "TEXT_DIM": "#a9b1d6", "TEXT_BRIGHT": "#ffffff",
+        "BAND_LOW": "#7aa2f7", "BAND_MID": "#9ece6a", "BAND_HIGH": "#f7768e",
+    },
+    "Modern Light": {
+        "BG_DARKEST": "#f0f0f5", "BG_DARK": "#ffffff", "BG_MODULE": "#fcfcfd",
+        "BG_HEADER": "#e8e8f0", "BG_SETTINGS": "#ffffff", "BG_INPUT": "#f5f5f9",
+        "BORDER": "#d1d1e0", "BORDER_ACCENT": "#4a90e2",
+        "ACCENT": "#4a90e2", "ACCENT_DIM": "#357abd",
+        "ACCENT_PURPLE": "#9013fe", "ACCENT_PINK": "#d0021b",
+        "TEXT": "#2c3e50", "TEXT_DIM": "#7f8c8d", "TEXT_BRIGHT": "#000000",
+        "BAND_LOW": "#4a90e2", "BAND_MID": "#40c057", "BAND_HIGH": "#fa5252",
+        "HEATMAP_STOPS": [
+            (0.00, "#ffffff"), (0.30, "#e8f4fd"), (0.60, "#a0d1f7"),
+            (0.85, "#4a90e2"), (1.00, "#2c3e50")
+        ]
+    },
+    "Glass": {
+        "BG_DARKEST": "#10ffffff", "BG_DARK": "#15ffffff", "BG_MODULE": "#20ffffff",
+        "BG_HEADER": "#30ffffff", "BG_SETTINGS": "#40ffffff", "BG_INPUT": "#10ffffff",
+        "BORDER": "#40ffffff", "BORDER_ACCENT": "#80ffffff",
+        "ACCENT": "#ffffff", "ACCENT_DIM": "#cccccc",
+        "ACCENT_PURPLE": "#e0e0e0", "ACCENT_PINK": "#f0f0f0",
+        "TEXT": "#ffffff", "TEXT_DIM": "#dddddd", "TEXT_BRIGHT": "#ffffff",
+        "BAND_LOW": "#ffffff", "BAND_MID": "#eeeeee", "BAND_HIGH": "#dddddd",
+    },
 }
 
 
@@ -152,15 +183,34 @@ class Colors:
 _current_theme = "Midnight"
 
 
-def apply_theme(name: str):
-    """Switch the active color palette to the named preset."""
+def apply_theme(name: str, overrides: dict = None):
+    """Switch the active color palette to the named preset and apply optional overrides."""
     global _current_theme
     if name not in THEME_PRESETS:
         return
     _current_theme = name
+    
+    # Baseline defaults (Midnight) to ensure we don't leak specialized colors from previous themes
+    defaults = THEME_PRESETS["Midnight"]
+    # Keys that are often missing in simpler themes but should reset
+    reset_keys = ["BAND_LOW", "BAND_MID", "BAND_HIGH", "HEATMAP_STOPS"]
+    
+    # 1. Reset baseline for specific keys that might persist
+    for key in reset_keys:
+        if key in defaults:
+            setattr(Colors, key, defaults[key])
+            
+    # 2. Apply the chosen preset
     preset = THEME_PRESETS[name]
     for attr, value in preset.items():
-        setattr(Colors, attr, value)
+        if hasattr(Colors, attr):
+            setattr(Colors, attr, value)
+    
+    # 3. Apply optional overrides
+    if overrides:
+        for attr, value in overrides.items():
+            if hasattr(Colors, attr):
+                setattr(Colors, attr, value)
 
 
 def current_theme_name() -> str:

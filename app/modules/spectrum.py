@@ -33,8 +33,32 @@ class SpectrumModule(BaseModule):
         self._peak_db = -120.0
         self._smooth_peak_freq = 0.0
         self._smooth_peak_db = -120.0
+        self._speed = 1.0
+        self.module_key = "spectrum"
         super().__init__(audio_engine, title="Spectrum", parent=parent)
         self.canvas.set_render_func(self._render)
+
+    def get_settings(self):
+        return {
+            "fft_size": self._fft_size,
+            "scale": self._scale,
+            "mode": self._mode,
+            "channel": self._channel,
+            "smoothing": self._smoothing,
+            "show_note": self._show_note,
+            "show_floating_note": self._show_floating_note,
+            "speed": self._speed
+        }
+
+    def apply_settings(self, settings):
+        self._set_fft_size(settings.get("fft_size", self._fft_size))
+        self._scale = settings.get("scale", self._scale)
+        self._mode = settings.get("mode", self._mode)
+        self._channel = settings.get("channel", self._channel)
+        self._smoothing = float(settings.get("smoothing", self._smoothing))
+        self._show_note = settings.get("show_note", self._show_note)
+        self._show_floating_note = settings.get("show_floating_note", self._show_floating_note)
+        self._speed = float(settings.get("speed", self._speed))
 
     def build_context_menu(self, menu):
         from PySide6.QtGui import QActionGroup
@@ -50,12 +74,21 @@ class SpectrumModule(BaseModule):
             
         fm = menu.addMenu("FFT Size")
         fg = QActionGroup(self)
-        for f in [1024, 2048, 4096, 8192, 16384]:
+        for f in [1024, 2048, 4096, 8192, 16384, 32768]:
             a = fm.addAction(str(f))
             a.setCheckable(True)
             a.setChecked(f == self._fft_size)
             a.triggered.connect(lambda checked, t=f: self._set_fft_size(int(t)))
             fg.addAction(a)
+            
+        sm_speed = menu.addMenu("Speed")
+        sg_speed = QActionGroup(self)
+        for s in [1, 2, 4]:
+            a = sm_speed.addAction(f"{s}x")
+            a.setCheckable(True)
+            a.setChecked(int(self._speed) == s)
+            a.triggered.connect(lambda checked, v=s: setattr(self, "_speed", float(v)))
+            sg_speed.addAction(a)
             
         scm = menu.addMenu("Scale")
         scg = QActionGroup(self)
@@ -77,7 +110,7 @@ class SpectrumModule(BaseModule):
 
         sm = menu.addMenu("Smoothing")
         sg = QActionGroup(self)
-        for sm_val in [0, 50, 75, 85, 95]:
+        for sm_val in [0, 50, 75, 85, 95, 98, 99]:
             a = sm.addAction(f"{sm_val}%")
             a.setCheckable(True)
             a.setChecked(abs(sm_val/100.0 - self._smoothing) < 0.01)
@@ -114,13 +147,22 @@ class SpectrumModule(BaseModule):
             self._acc_buf = np.roll(self._acc_buf, -n)
             self._acc_buf[-n:] = sig
 
-        # FFT on the last fft_size samples from the accumulation buffer
-        segment = self._acc_buf[-self._fft_size:]
-        mag = compute_fft(segment, self._fft_size)
+        # Process multiple sub-steps for speed
+        n_steps = int(self._speed)
+        step_size = n // n_steps if n_steps > 1 else n
+        
+        for s in range(n_steps):
+            # FFT on the last fft_size samples from the accumulation buffer, 
+            # sliding backwards for sub-steps
+            offset = (n_steps - 1 - s) * step_size
+            segment = self._acc_buf[len(self._acc_buf) - self._fft_size - offset : len(self._acc_buf) - offset]
+            if len(segment) < self._fft_size: continue
+            
+            mag = compute_fft(segment, self._fft_size)
 
-        nb = min(len(mag), len(self._smoothed))
-        a = 1.0 - self._smoothing
-        self._smoothed[:nb] = self._smoothed[:nb] * self._smoothing + mag[:nb] * a
+            nb = min(len(mag), len(self._smoothed))
+            a = 1.0 - self._smoothing
+            self._smoothed[:nb] = self._smoothed[:nb] * self._smoothing + mag[:nb] * a
 
         freqs = fft_frequencies(self._fft_size, self.audio_engine.sample_rate)
         self._peak_freq, self._peak_db = detect_peak_frequency(
@@ -146,12 +188,13 @@ class SpectrumModule(BaseModule):
             if 0 < px < w:
                 painter.setPen(QPen(QColor(Colors.GRID), 1, Qt.DotLine))
                 painter.drawLine(int(px), 0, int(px), int(dh))
-                lb = f"{gf}" if gf < 1000 else f"{gf//1000}k"
-                from PySide6.QtGui import QFontMetrics
-                fm = QFontMetrics(Fonts.small())
-                tw = fm.horizontalAdvance(lb) + 12
-                # Draw labels in the margin area underneath the grid
-                self.draw_text_badge(painter, QRectF(px - tw/2, dh + 2, tw, 14), Qt.AlignCenter, lb, QColor(Colors.TEXT_DIM))
+                if w > 100:
+                    lb = f"{gf}" if gf < 1000 else f"{gf//1000}k"
+                    from PySide6.QtGui import QFontMetrics
+                    fm = QFontMetrics(Fonts.small())
+                    tw = fm.horizontalAdvance(lb) + 12
+                    # Draw labels in the margin area underneath the grid
+                    self.draw_text_badge(painter, QRectF(px - tw/2, dh + 2, tw, 14), Qt.AlignCenter, lb, QColor(Colors.TEXT_DIM))
         for db in range(-80, 1, 10):
             y = dh * (1.0 - (db - db_min) / (db_max - db_min))
             if 0 < y < dh:
@@ -232,15 +275,16 @@ class SpectrumModule(BaseModule):
             fm = QFontMetrics(painter.font())
             tw = fm.horizontalAdvance(txt) + 20
             
-            if self._show_floating_note:
-                # Calculate peak screen position
-                px = map_frequencies_to_pixels(np.array([self._smooth_peak_freq]), w, self._scale)[0]
-                frac = max(0, min(1, (self._smooth_peak_db - db_min) / (db_max - db_min)))
-                py = dh * (1.0 - frac)
-                # Draw floating badge
-                self.draw_text_badge(painter, QRectF(px - tw/2, py - 25, tw, 22), Qt.AlignCenter, txt, QColor(Colors.ACCENT))
-                # Draw small circle at peak
-                painter.setPen(Qt.NoPen); painter.setBrush(QColor(Colors.ACCENT))
-                painter.drawEllipse(QPointF(px, py), 3, 3)
-            else:
-                self.draw_text_badge(painter, QRectF(w - tw - 10, 10, tw, 22), Qt.AlignRight, txt, QColor(Colors.ACCENT))
+            if w > 80:
+                if self._show_floating_note:
+                    # Calculate peak screen position
+                    px = map_frequencies_to_pixels(np.array([self._smooth_peak_freq]), w, self._scale)[0]
+                    frac = max(0, min(1, (self._smooth_peak_db - db_min) / (db_max - db_min)))
+                    py = dh * (1.0 - frac)
+                    # Draw floating badge
+                    self.draw_text_badge(painter, QRectF(px - tw/2, py - 25, tw, 22), Qt.AlignCenter, txt, QColor(Colors.ACCENT))
+                    # Draw small circle at peak
+                    painter.setPen(Qt.NoPen); painter.setBrush(QColor(Colors.ACCENT))
+                    painter.drawEllipse(QPointF(px, py), 3, 3)
+                else:
+                    self.draw_text_badge(painter, QRectF(w - tw - 10, 10, tw, 22), Qt.AlignRight, txt, QColor(Colors.ACCENT))
