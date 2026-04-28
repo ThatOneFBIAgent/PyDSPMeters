@@ -24,12 +24,15 @@ class SpectrumModule(BaseModule):
         self._mode = "FFT"
         self._channel = "Left"
         self._smoothing = 0.85
-        self._show_note = False
+        self._show_note = True
+        self._show_floating_note = False
         # Accumulation buffer — always holds enough samples for the largest FFT
         self._acc_buf = np.zeros(16384, dtype=np.float32)
         self._smoothed = np.full(8193, -120.0, dtype=np.float64)
         self._peak_freq = 0.0
         self._peak_db = -120.0
+        self._smooth_peak_freq = 0.0
+        self._smooth_peak_db = -120.0
         super().__init__(audio_engine, title="Spectrum", parent=parent)
         self.canvas.set_render_func(self._render)
 
@@ -86,6 +89,11 @@ class SpectrumModule(BaseModule):
         a.setChecked(self._show_note)
         a.triggered.connect(lambda checked: setattr(self, "_show_note", checked))
 
+        a = menu.addAction("Floating Note Peak")
+        a.setCheckable(True)
+        a.setChecked(self._show_floating_note)
+        a.triggered.connect(lambda checked: setattr(self, "_show_floating_note", checked))
+
     def _set_fft_size(self, size):
         self._fft_size = size
         n = size // 2 + 1
@@ -117,6 +125,14 @@ class SpectrumModule(BaseModule):
         freqs = fft_frequencies(self._fft_size, self.audio_engine.sample_rate)
         self._peak_freq, self._peak_db = detect_peak_frequency(
             self._smoothed[:len(freqs)], freqs)
+            
+        # Smoothing for peak detection
+        if self._peak_db > -90:
+            alpha = 0.2
+            self._smooth_peak_freq += (self._peak_freq - self._smooth_peak_freq) * alpha
+            self._smooth_peak_db += (self._peak_db - self._smooth_peak_db) * alpha
+        else:
+            self._smooth_peak_db = -120.0
 
     def _render(self, painter, w, h):
         db_min, db_max = -90.0, 0.0
@@ -208,8 +224,23 @@ class SpectrumModule(BaseModule):
                 fc = QColor(Colors.ACCENT); fc.setAlpha(15)
                 painter.fillPath(fp, QBrush(fc))
 
-        if self._show_note and self._peak_db > -80:
-            note = hz_to_note_name(self._peak_freq)
-            txt = f"{note}  {self._peak_freq:.0f}Hz  {self._peak_db:.1f}dB"
+        if self._show_note and self._smooth_peak_db > -80:
+            note = hz_to_note_name(self._smooth_peak_freq)
+            txt = f"{note}  {self._smooth_peak_freq:.0f}Hz  {self._smooth_peak_db:.1f}dB"
             painter.setFont(Fonts.value())
-            self.draw_text_badge(painter, QRectF(w - 200, 10, 180, 22), Qt.AlignRight, txt, QColor(Colors.ACCENT))
+            from PySide6.QtGui import QFontMetrics
+            fm = QFontMetrics(painter.font())
+            tw = fm.horizontalAdvance(txt) + 20
+            
+            if self._show_floating_note:
+                # Calculate peak screen position
+                px = map_frequencies_to_pixels(np.array([self._smooth_peak_freq]), w, self._scale)[0]
+                frac = max(0, min(1, (self._smooth_peak_db - db_min) / (db_max - db_min)))
+                py = dh * (1.0 - frac)
+                # Draw floating badge
+                self.draw_text_badge(painter, QRectF(px - tw/2, py - 25, tw, 22), Qt.AlignCenter, txt, QColor(Colors.ACCENT))
+                # Draw small circle at peak
+                painter.setPen(Qt.NoPen); painter.setBrush(QColor(Colors.ACCENT))
+                painter.drawEllipse(QPointF(px, py), 3, 3)
+            else:
+                self.draw_text_badge(painter, QRectF(w - tw - 10, 10, tw, 22), Qt.AlignRight, txt, QColor(Colors.ACCENT))
