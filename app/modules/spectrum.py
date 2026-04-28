@@ -131,7 +131,11 @@ class SpectrumModule(BaseModule):
                 painter.setPen(QPen(QColor(Colors.GRID), 1, Qt.DotLine))
                 painter.drawLine(int(px), 0, int(px), int(dh))
                 lb = f"{gf}" if gf < 1000 else f"{gf//1000}k"
-                self.draw_text_badge(painter, QRectF(px - 12, dh + 1, 24, 14), Qt.AlignCenter, lb, QColor(Colors.TEXT_DIM))
+                from PySide6.QtGui import QFontMetrics
+                fm = QFontMetrics(Fonts.small())
+                tw = fm.horizontalAdvance(lb) + 12
+                # Draw labels in the margin area underneath the grid
+                self.draw_text_badge(painter, QRectF(px - tw/2, dh + 2, tw, 14), Qt.AlignCenter, lb, QColor(Colors.TEXT_DIM))
         for db in range(-80, 1, 10):
             y = dh * (1.0 - (db - db_min) / (db_max - db_min))
             if 0 < y < dh:

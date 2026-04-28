@@ -63,9 +63,6 @@ class ModuleHeader(QFrame):
         self._title.setText(title)
 
 
-
-
-
 class RenderCanvas(QWidget):
     """
     Drawing surface for visualizations.
@@ -103,15 +100,10 @@ class RenderCanvas(QWidget):
 class BaseModule(QWidget):
     """
     Base class for all visualization modules.
-
-    Subclasses must:
-      1. Call super().__init__() with a title.
-      2. Override `build_context_menu(menu)` to add QActions.
-      3. Override `on_audio_data(data)` to process incoming audio.
-      4. Override `canvas.render(painter, w, h)` via self.canvas for drawing.
     """
 
     close_requested = Signal(object)  # emits self
+    move_requested = Signal(object, int)  # emits self, direction (-1 or 1)
 
     def __init__(self, audio_engine, title: str = "Module", parent=None):
         super().__init__(parent)
@@ -167,13 +159,15 @@ class BaseModule(QWidget):
             rect = rect.toRect()
             
         br = fm.boundingRect(rect, align, text)
-        pad_x, pad_y = 6, 2
+        from app.theme import Fonts
+        pad_x = int(6 * Fonts.TEXT_SCALE)
+        pad_y = int(2 * Fonts.TEXT_SCALE)
         br.adjust(-pad_x, -pad_y, pad_x, pad_y)
         
         painter.save()
         painter.setPen(Qt.NoPen)
         painter.setBrush(bg_color)
-        painter.drawRoundedRect(br, 4, 4)
+        painter.drawRoundedRect(br, int(4 * Fonts.TEXT_SCALE), int(4 * Fonts.TEXT_SCALE))
         
         painter.setPen(text_pen)
         painter.drawText(rect, align, text)
@@ -181,7 +175,7 @@ class BaseModule(QWidget):
 
     def contextMenuEvent(self, event):
         """Show settings via right-click."""
-        from PySide6.QtWidgets import QMenu
+        from PySide6.QtWidgets import QMenu, QSplitter
         menu = QMenu(self)
         
         self.build_context_menu(menu)
@@ -189,6 +183,26 @@ class BaseModule(QWidget):
         if not menu.isEmpty():
             menu.addSeparator()
             
+        # Determine orientation for better labels
+        parent = self.parentWidget()
+        is_vert = False
+        if isinstance(parent, QSplitter):
+            is_vert = parent.orientation() == Qt.Vertical
+
+        # Movement
+        move_menu = menu.addMenu("⇅ Move Module")
+        if is_vert:
+            up_act = move_menu.addAction("↑ Move Up")
+            up_act.triggered.connect(lambda: self.move_requested.emit(self, -1))
+            down_act = move_menu.addAction("↓ Move Down")
+            down_act.triggered.connect(lambda: self.move_requested.emit(self, 1))
+        else:
+            left_act = move_menu.addAction("← Move Left")
+            left_act.triggered.connect(lambda: self.move_requested.emit(self, -1))
+            right_act = move_menu.addAction("→ Move Right")
+            right_act.triggered.connect(lambda: self.move_requested.emit(self, 1))
+
+        menu.addSeparator()
         remove_action = menu.addAction("✕ Remove Module")
         remove_action.triggered.connect(lambda: self.close_requested.emit(self))
         
@@ -207,4 +221,6 @@ class BaseModule(QWidget):
         try:
             self.audio_engine.data_ready.disconnect(self.on_audio_data)
         except RuntimeError:
+            pass
+        except Exception:
             pass

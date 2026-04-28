@@ -197,7 +197,10 @@ class SpectrogramModule(BaseModule):
                         painter.setPen(QPen(QColor(255, 255, 255, 40), 1))
                         painter.drawLine(0, int(fy), w, int(fy))
                         lb = f"{gf}" if gf < 1000 else f"{gf // 1000}k"
-                        self.draw_text_badge(painter, QRectF(6, fy - 10, 30, 12), Qt.AlignLeft, lb, QColor(255, 255, 255, 150))
+                        from PySide6.QtGui import QFontMetrics
+                        fm = QFontMetrics(Fonts.small())
+                        tw = fm.horizontalAdvance(lb) + 12
+                        self.draw_text_badge(painter, QRectF(6, fy - 10, tw, 12), Qt.AlignLeft, lb, QColor(255, 255, 255, 150))
 
         if self._show_piano:
             self._draw_piano(painter, w, h)

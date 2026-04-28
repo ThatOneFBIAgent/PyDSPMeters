@@ -273,25 +273,74 @@ class MainWindow(QMainWindow):
         gain_layout.setContentsMargins(10, 4, 10, 4)
         gain_label = QLabel("Input Overdrive:")
         gain_label.setFixedWidth(90)
+        
         gain_slider = QSlider(Qt.Horizontal)
         gain_slider.setRange(0, 150)
         gain_slider.setValue(int(self.audio_engine.gain_multiplier * 100))
-        gain_slider.setFixedWidth(120)
+        gain_slider.setFixedWidth(110)
         
-        gain_val_label = QLabel(f"{gain_slider.value()}%")
-        gain_val_label.setFixedWidth(30)
+        from PySide6.QtWidgets import QLineEdit
+        from PySide6.QtGui import QIntValidator
+        gain_input = QLineEdit(str(gain_slider.value()))
+        gain_input.setFixedWidth(40)
+        gain_input.setAlignment(Qt.AlignCenter)
+        gain_input.setValidator(QIntValidator(0, 150))
+        gain_input.setStyleSheet(f"background: {Colors.BG_INPUT}; border: 1px solid {Colors.BORDER}; padding: 1px;")
 
-        def on_gain_change(v):
+        def on_gain_slider(v):
             self.audio_engine.gain_multiplier = v / 100.0
-            gain_val_label.setText(f"{v}%")
+            gain_input.setText(str(v))
 
-        gain_slider.valueChanged.connect(on_gain_change)
+        def on_gain_text():
+            try:
+                v = int(gain_input.text())
+                v = max(0, min(150, v))
+                gain_slider.setValue(v)
+                self.audio_engine.gain_multiplier = v / 100.0
+            except: pass
+
+        gain_slider.valueChanged.connect(on_gain_slider)
+        gain_input.editingFinished.connect(on_gain_text)
         
         gain_layout.addWidget(gain_label)
         gain_layout.addWidget(gain_slider)
-        gain_layout.addWidget(gain_val_label)
+        gain_layout.addWidget(gain_input)
         gain_act.setDefaultWidget(gain_widget)
         menu.addAction(gain_act)
+
+        # Text Scale Slider
+        text_act = QWidgetAction(self)
+        text_widget = QWidget()
+        text_layout = QHBoxLayout(text_widget)
+        text_layout.setContentsMargins(10, 4, 10, 4)
+        text_label = QLabel("Label Scale:")
+        text_label.setFixedWidth(90)
+        
+        text_slider = QSlider(Qt.Horizontal)
+        text_slider.setRange(50, 150) # 50% to 150%
+        text_slider.setValue(int(Fonts.TEXT_SCALE * 100))
+        text_slider.setFixedWidth(110)
+        
+        text_val = QLabel(f"{text_slider.value()}%")
+        text_val.setFixedWidth(40)
+        text_val.setAlignment(Qt.AlignCenter)
+
+        def on_text_scale(v):
+            Fonts.TEXT_SCALE = v / 100.0
+            text_val.setText(f"{v}%")
+            # Trigger a refresh of the entire UI to update font sizes
+            self.setStyleSheet(build_stylesheet())
+            for m in self._modules:
+                m.setStyleSheet(f"#baseModule {{ background: {Colors.BG_DARK}; border: 1px solid {Colors.BORDER}; border-radius: 4px; }}")
+                m.header.update() # Refresh header fonts if needed
+        
+        text_slider.valueChanged.connect(on_text_scale)
+        
+        text_layout.addWidget(text_label)
+        text_layout.addWidget(text_slider)
+        text_layout.addWidget(text_val)
+        text_act.setDefaultWidget(text_widget)
+        menu.addAction(text_act)
 
         menu.addSeparator()
 
@@ -371,6 +420,7 @@ class MainWindow(QMainWindow):
         cls = MODULE_REGISTRY[module_key]["class"]
         module = cls(self.audio_engine)
         module.close_requested.connect(self.remove_module)
+        module.move_requested.connect(self._move_module)
         
         # Apply header visibility
         module.header.setVisible(self._show_headers)
@@ -384,6 +434,13 @@ class MainWindow(QMainWindow):
             module.cleanup()
             module.setParent(None)
             module.deleteLater()
+
+    def _move_module(self, module, direction):
+        idx = self.splitter.indexOf(module)
+        new_idx = idx + direction
+        if 0 <= new_idx < self.splitter.count():
+            # In QSplitter, insertWidget moves the widget if it's already there
+            self.splitter.insertWidget(new_idx, module)
 
     # ── Layout Toggle ───────────────────────────────────────────────────────
 

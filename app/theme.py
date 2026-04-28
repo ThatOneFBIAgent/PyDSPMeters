@@ -175,30 +175,31 @@ def current_theme_name() -> str:
 class Fonts:
     FAMILY = "Segoe UI"
     FAMILY_MONO = "Cascadia Code"
+    TEXT_SCALE = 1.0
 
     @staticmethod
     def header() -> QFont:
-        f = QFont(Fonts.FAMILY, 9)
+        f = QFont(Fonts.FAMILY, int(9 * Fonts.TEXT_SCALE))
         f.setBold(True)
         return f
 
     @staticmethod
     def label() -> QFont:
-        return QFont(Fonts.FAMILY, 8)
+        return QFont(Fonts.FAMILY, int(8 * Fonts.TEXT_SCALE))
 
     @staticmethod
     def value() -> QFont:
-        f = QFont(Fonts.FAMILY_MONO, 10)
+        f = QFont(Fonts.FAMILY_MONO, int(10 * Fonts.TEXT_SCALE))
         f.setBold(True)
         return f
 
     @staticmethod
     def small() -> QFont:
-        return QFont(Fonts.FAMILY, 7)
+        return QFont(Fonts.FAMILY, int(7 * Fonts.TEXT_SCALE))
 
     @staticmethod
     def vu_scale() -> QFont:
-        f = QFont(Fonts.FAMILY, 7)
+        f = QFont(Fonts.FAMILY, int(7 * Fonts.TEXT_SCALE))
         f.setBold(True)
         return f
 

@@ -149,6 +149,14 @@ class AudioEngine(QObject):
 
     # ── Queue Drain (runs on Qt main thread) ────────────────────────────────
 
+    @property
+    def gain_multiplier(self):
+        return self._gain_multiplier
+
+    @gain_multiplier.setter
+    def gain_multiplier(self, value):
+        self._gain_multiplier = float(value)
+
     @Slot()
     def _drain_queue(self):
         """Pull all available audio blocks from the queue and emit signals."""
@@ -159,10 +167,15 @@ class AudioEngine(QObject):
             except queue.Empty:
                 break
 
-        for data in blocks:
-            if self.gain_multiplier != 1.0:
-                data = data * self.gain_multiplier
+        if not blocks:
+            return
 
+        # Apply gain multiplier correctly by modifying the blocks
+        for i in range(len(blocks)):
+            if self._gain_multiplier != 1.0:
+                blocks[i] = blocks[i] * self._gain_multiplier
+
+        for data in blocks:
             n = len(data)
             buf_len = len(self.buffer)
 
@@ -183,10 +196,9 @@ class AudioEngine(QObject):
 
             self._total_written += n
 
-        if blocks:
-            # Concatenate all blocks to prevent event storm when unfocused
-            combined = np.concatenate(blocks)
-            self.data_ready.emit(combined)
+        # Concatenate all blocks to prevent event storm when unfocused
+        combined = np.concatenate(blocks)
+        self.data_ready.emit(combined)
 
     # ── Buffer Access ───────────────────────────────────────────────────────
 

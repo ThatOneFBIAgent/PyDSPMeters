@@ -142,6 +142,18 @@ class LoudnessMeter:
         return -0.691 + 10.0 * np.log10(ms)
 
     @property
+    def lufs_momentary_channels(self) -> np.ndarray:
+        segment = self._get_last_n(self._buffer, self._momentary_samples)
+        ms = np.mean(segment**2, axis=0)
+        return -0.691 + 10.0 * np.log10(np.clip(ms, 1e-12, None))
+
+    @property
+    def lufs_shortterm_channels(self) -> np.ndarray:
+        segment = self._get_last_n(self._buffer, self._shortterm_samples)
+        ms = np.mean(segment**2, axis=0)
+        return -0.691 + 10.0 * np.log10(np.clip(ms, 1e-12, None))
+
+    @property
     def rms_momentary(self) -> float:
         """Momentary RMS (~400 ms) in dB."""
         return self._rms_db(self._momentary_samples)
@@ -152,6 +164,18 @@ class LoudnessMeter:
         return self._rms_db(self._shortterm_samples)
 
     @property
+    def rms_momentary_channels(self) -> np.ndarray:
+        segment = self._get_last_n(self._raw_buffer, self._momentary_samples)
+        ms = np.mean(segment**2, axis=0)
+        return 10.0 * np.log10(np.clip(ms, 1e-12, None))
+
+    @property
+    def rms_shortterm_channels(self) -> np.ndarray:
+        segment = self._get_last_n(self._raw_buffer, self._shortterm_samples)
+        ms = np.mean(segment**2, axis=0)
+        return 10.0 * np.log10(np.clip(ms, 1e-12, None))
+
+    @property
     def true_peak(self) -> float:
         """True peak of the most recent buffer content in dBFS."""
         segment = self._get_last_n(self._raw_buffer, self._momentary_samples)
@@ -159,3 +183,9 @@ class LoudnessMeter:
         if peak < 1e-20:
             return -120.0
         return float(20.0 * np.log10(peak))
+
+    @property
+    def true_peak_channels(self) -> np.ndarray:
+        segment = self._get_last_n(self._raw_buffer, self._momentary_samples)
+        peaks = np.max(np.abs(segment), axis=0)
+        return 20.0 * np.log10(np.clip(peaks, 1e-6, None))
