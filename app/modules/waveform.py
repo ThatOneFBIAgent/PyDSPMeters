@@ -135,7 +135,7 @@ class WaveformModule(BaseModule):
         else: # L+R or All
             channels = list(range(self.audio_engine.channels))
 
-        colors = [Colors.ACCENT, Colors.ACCENT_PINK, Colors.ACCENT_PURPLE, Colors.BAND_LOW, Colors.BAND_MID, Colors.BAND_HIGH, Colors.YELLOW, Colors.ORANGE]
+        colors = [Colors.ACCENT, Colors.ACCENT_PINK, Colors.ACCENT_PURPLE, Colors.BAND_LOW, Colors.BAND_MID, Colors.BAND_HIGH, Colors.METER_MID, Colors.METER_HIGH]
         
         if self._display_mode == "Split" and len(channels) > 1:
             n_ch = len(channels)
@@ -189,8 +189,8 @@ class WaveformModule(BaseModule):
             painter.setPen(QPen(QColor(base_color), 1))
             painter.drawLines(base_lines)
         if yellow_lines:
-            painter.setPen(QPen(QColor(Colors.YELLOW), 1))
+            painter.setPen(QPen(QColor(Colors.METER_MID), 1))
             painter.drawLines(yellow_lines)
         if red_lines:
-            painter.setPen(QPen(QColor(Colors.RED), 1))
+            painter.setPen(QPen(QColor(Colors.METER_HIGH), 1))
             painter.drawLines(red_lines)

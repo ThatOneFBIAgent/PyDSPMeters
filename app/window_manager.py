@@ -299,21 +299,21 @@ class MainWindow(QMainWindow):
             else:
                 self.add_module(item.get("key"), item.get("config", {}))
             
-        # Splitter sizes (applied with a small delay to ensure geometry is ready)
-        if "splitter_sizes" in self._settings:
-            sizes = self._settings["splitter_sizes"]
-            
-            def finalize_load():
-                self.splitter.setSizes(sizes)
-                self.splitter.setVisible(True)
-                self._loading_settings = False
-                if hasattr(self, "_loading_overlay"):
-                    self._loading_overlay.fade_out()
-                    
-            QTimer.singleShot(250, finalize_load)
-        else:
+        def finalize_load():
             self._loading_settings = False
-            QTimer.singleShot(250, lambda: self._loading_overlay.fade_out() if hasattr(self, "_loading_overlay") else None)
+            self.splitter.setVisible(True)
+            if "splitter_sizes" in self._settings:
+                self.splitter.setSizes(self._settings["splitter_sizes"])
+            else:
+                # Fair distribution if no saved sizes
+                total = self.splitter.width() if not self._layout_vertical else self.splitter.height()
+                if len(self._modules) > 0:
+                    self.splitter.setSizes([total // len(self._modules)] * len(self._modules))
+            
+            if hasattr(self, "_loading_overlay"):
+                self._loading_overlay.fade_out()
+                    
+        QTimer.singleShot(250, finalize_load)
 
         if self._current_device is not None:
             # Refresh devices to check if saved index is still valid
@@ -350,6 +350,17 @@ class MainWindow(QMainWindow):
     def _show_gear_menu(self):
         from PySide6.QtWidgets import QWidgetAction, QSlider, QHBoxLayout
         menu = QMenu(self)
+        
+        # Force Midnight colors for settings for readability
+        menu.setStyleSheet(f"""
+            QMenu {{ background: #1a1a2e; border: 1px solid #3a3a6a; color: #d8d8f0; padding: 4px; }}
+            QMenu::item {{ padding: 5px 20px; border-radius: 3px; color: #d8d8f0; }}
+            QMenu::item:selected {{ background: #0088aa; color: #ffffff; }}
+            QMenu::separator {{ height: 1px; background: #252545; margin: 4px 8px; }}
+            QLabel {{ color: #a9b1d6; }}
+            QSlider::groove:horizontal {{ background: #10101a; height: 4px; border-radius: 2px; }}
+            QSlider::handle:horizontal {{ background: #00bbcc; width: 12px; height: 12px; margin: -4px 0; border-radius: 6px; }}
+        """)
 
         # Audio device submenu grouped by API
         dev_menu = menu.addMenu("🎤  Audio Device")
@@ -566,12 +577,16 @@ class MainWindow(QMainWindow):
         self.splitter.setHandleWidth(w)
         
     def _set_divider_opacity(self, alpha_pct):
-        # Update settings for persistence
         win_s = self._settings.setdefault("window", {})
         win_s["divider_opacity"] = alpha_pct
         
-        # Generate handle color with alpha
-        c = QColor(Colors.BORDER)
+        # Ensure we pull the fresh hex from the current theme
+        base_hex = Colors.BORDER
+        # If it's an 8-char hex (AARRGGBB), we strip the old alpha to avoid stacking
+        if len(base_hex) == 9 and base_hex.startswith("#"):
+            base_hex = "#" + base_hex[3:]
+            
+        c = QColor(base_hex)
         c.setAlpha(int(255 * alpha_pct / 100))
         color_str = f"rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()})"
         

@@ -48,14 +48,23 @@ class SpectrogramModule(BaseModule):
         self._history = np.zeros((self._history_len, self._display_h), dtype=np.float32)
         self._col_idx = 0
         self._lut = _build_colormap(Colors.HEATMAP_STOPS)
-        self._img_cache = None  # Keep reference for QImage data
         self._speed = 1.0
+        self._last_rendered_idx = 0
         self.module_key = "spectrogram"
         super().__init__(audio_engine, title="Spectrogram", parent=parent)
         self.canvas.set_render_func(self._render)
 
     def on_theme_changed(self):
         self._lut = _build_colormap(Colors.HEATMAP_STOPS)
+        # Force re-color existing buffer to prevent bleeding from old theme
+        if hasattr(self, "_buffer_data"):
+            # Map history values (0-1) to indices (0-255)
+            indices = np.clip((self._history * 255).astype(np.int32), 0, 255)
+            # Apply LUT to entire history and update buffer_data
+            # Note: buffer_data is (H, W, 3), history is (W, H)
+            for x in range(self._history_len):
+                rgb_col = self._lut[indices[x]]
+                self._buffer_data[:, x] = rgb_col[::-1] # Reverse for freq orientation
 
     def get_settings(self):
         return {
@@ -216,12 +225,17 @@ class SpectrogramModule(BaseModule):
             self._buffer_img = QImage(self._buffer_data.data, self._history_len, self._display_h, 
                                      self._history_len * 3, QImage.Format_RGB888)
 
-        # Colormap newest column
-        write_head = (self._col_idx - 1) % self._history_len
-        column_data = self._history[write_head]
-        indices = np.clip((column_data * 255).astype(np.int32), 0, 255)
-        rgb_col = self._lut[indices]
-        self._buffer_data[:, write_head] = rgb_col[::-1]
+        # Colormap all new columns since last render
+        if self._last_rendered_idx < self._col_idx:
+            # For efficiency, only color the range we missed
+            for idx in range(self._last_rendered_idx, self._col_idx):
+                write_head = idx % self._history_len
+                column_data = self._history[write_head]
+                indices = np.clip((column_data * 255).astype(np.int32), 0, 255)
+                rgb_col = self._lut[indices]
+                self._buffer_data[:, write_head] = rgb_col[::-1]
+            
+            self._last_rendered_idx = self._col_idx
         
         # Draw circular segments
         head = self._col_idx % self._history_len

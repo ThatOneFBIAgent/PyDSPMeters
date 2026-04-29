@@ -1,22 +1,22 @@
 {
     "window": {
-        "x": 64,
+        "x": 160,
         "y": 0,
-        "width": 1793,
-        "height": 85,
+        "width": 1601,
+        "height": 161,
         "vertical_layout": false,
-        "show_headers": false,
+        "show_headers": true,
         "auto_hide_ui": false,
         "divider_width": 1,
         "divider_opacity": 86
     },
     "audio": {
         "device_index": 9,
-        "gain": 1.35,
+        "gain": 1.0,
         "channels": 2
     },
     "ui": {
-        "theme": "Transparent Crimson",
+        "theme": "Midnight",
         "text_scale": 0.81,
         "color_overrides": {}
     },
@@ -41,44 +41,37 @@
                 "mode": "FFT",
                 "channel": "Left",
                 "smoothing": 0.85,
-                "show_note": false,
+                "show_note": true,
                 "show_floating_note": false,
                 "speed": 1.0
             }
         },
         {
-            "key": "oscilloscope",
+            "key": "spectrogram",
             "config": {
-                "display_samples": 4096,
-                "channel": "L+R"
+                "fft_size": 2048,
+                "scale": "logarithmic",
+                "orientation": "Horizontal",
+                "tilt": 0.0,
+                "mode": "Classic",
+                "show_piano": false,
+                "show_freq": true,
+                "speed": 1.0
             }
         },
         {
-            "key": "vu_meter",
+            "key": "waveform",
             "config": {
-                "channel": "L+R",
-                "cal_offset": 0.0,
-                "style": 0,
-                "show_peak": true,
-                "show_clip": true
-            }
-        },
-        {
-            "key": "stereometer",
-            "config": {
-                "display_mode": "Scaled",
-                "color_mode": "RGB",
-                "corr_mode": "Single-Band",
-                "minimal_mode": true,
-                "halved_view": false
+                "channel": "Left",
+                "speed": 2.0,
+                "display_mode": "Overlay"
             }
         }
     ],
     "splitter_sizes": [
-        82,
-        482,
-        828,
-        246,
-        143
+        382,
+        708,
+        121,
+        381
     ]
 }
