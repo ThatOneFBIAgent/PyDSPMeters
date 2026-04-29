@@ -59,12 +59,14 @@ class AudioEngine(QObject):
         inputs = []
         for i, d in enumerate(devices):
             if d["max_input_channels"] > 0:
+                host_api_name = sd.query_hostapis(d["hostapi"])["name"]
                 inputs.append({
                     "index": i,
                     "name": d["name"],
+                    "full_id": f"{d['name']} ({host_api_name})",
                     "channels": d["max_input_channels"],
                     "sample_rate": d["default_samplerate"],
-                    "hostapi": sd.query_hostapis(d["hostapi"])["name"],
+                    "hostapi": host_api_name,
                 })
         return inputs
 

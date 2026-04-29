@@ -168,25 +168,30 @@ class WaveformModule(BaseModule):
         peak_lines = []
         
         for x in range(len(maxs)):
-            amp = rmss[x] * 2.5
+            # RMS Core coloring based on amplitude
+            rms_val = rmss[x] * 2.0 # Standardized scale
             h_rms = rmss[x] * h_factor
             
             line = QLineF(x, mid_y - h_rms, x, mid_y + h_rms)
-            if amp > 0.9: red_lines.append(line)
-            elif amp > 0.6: yellow_lines.append(line)
-            else: base_lines.append(line)
+            if rms_val > 0.7: 
+                red_lines.append(line)
+            elif rms_val > 0.3: 
+                yellow_lines.append(line)
+            else: 
+                base_lines.append(line)
             
-            # Peak outline (always base_color but transparent)
+            # Peak outline (using base_color)
             peak_lines.append(QLineF(x, mid_y - maxs[x] * h_factor, x, mid_y - mins[x] * h_factor))
 
-        # 1. Draw Peaks (underneath)
-        pc = QColor(base_color); pc.setAlpha(40)
+        # 1. Draw Peaks (translucent background)
+        pc = QColor(base_color)
+        pc.setAlpha(35)
         painter.setPen(QPen(pc, 1))
         painter.drawLines(peak_lines)
         
-        # 2. Draw RMS Cores (grouped by color)
+        # 2. Draw RMS Cores with theme-aware meter colors
         if base_lines:
-            painter.setPen(QPen(QColor(base_color), 1))
+            painter.setPen(QPen(QColor(Colors.METER_LOW), 1))
             painter.drawLines(base_lines)
         if yellow_lines:
             painter.setPen(QPen(QColor(Colors.METER_MID), 1))

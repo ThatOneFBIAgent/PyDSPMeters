@@ -20,6 +20,11 @@ THEME_PRESETS = {
         "BAND_LOW": "#0088ff", "BAND_MID": "#00e87b", "BAND_HIGH": "#ff4444",
         "METER_LOW": "#0088ff", "METER_MID": "#00e87b", "METER_HIGH": "#ff4444",
         "PEAK_LED": "#ffcc00", "CLIP_LED": "#ff2244",
+        "HEATMAP_STOPS": [
+            (0.00, "#000000"), (0.15, "#0a0040"), (0.30, "#0044cc"),
+            (0.45, "#00bbcc"), (0.55, "#00cc44"), (0.70, "#cccc00"),
+            (0.85, "#cc4400"), (1.00, "#ff0000")
+        ]
     },
     "Abyss": {
         "BG_DARKEST": "#000000", "BG_DARK": "#0a0a0a", "BG_MODULE": "#0f0f0f",
@@ -337,14 +342,10 @@ def apply_theme(name: str, overrides: dict = None):
     # Keys that are often missing in simpler themes but should reset
     reset_keys = ["BAND_LOW", "BAND_MID", "BAND_HIGH", "HEATMAP_STOPS", "METER_LOW", "METER_MID", "METER_HIGH", "PEAK_LED", "CLIP_LED"]
     
-    # 1. Reset baseline for specific keys
+    # 1. Reset baseline for specific keys from Defaults
     for key in reset_keys:
         if key in defaults:
             setattr(Colors, key, defaults[key])
-        elif key.startswith("METER_") or key.endswith("_LED"):
-            if "LOW" in key: setattr(Colors, key, "#00e87b")
-            elif "MID" in key: setattr(Colors, key, "#f0c800")
-            else: setattr(Colors, key, "#ff2244")
 
     # Sync back-compat aliases
     Colors.GREEN = Colors.METER_LOW
@@ -421,6 +422,9 @@ def build_stylesheet() -> str:
     }}
     QMainWindow, QWidget#centralWidget {{
         background: {Colors.BG_DARKEST};
+    }}
+    QSplitter {{
+        background: {"transparent" if "Transparent" in _current_theme or "Glass" in _current_theme else Colors.BG_DARKEST};
     }}
     QComboBox {{
         background: {Colors.BG_INPUT};

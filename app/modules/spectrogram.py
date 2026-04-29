@@ -45,6 +45,7 @@ class SpectrogramModule(BaseModule):
         self._loop = False
         self._display_h = 256
         self._history_len = 512
+        self._db_floor = -90.0
         self._history = np.zeros((self._history_len, self._display_h), dtype=np.float32)
         self._col_idx = 0
         self._lut = _build_colormap(Colors.HEATMAP_STOPS)
@@ -64,7 +65,8 @@ class SpectrogramModule(BaseModule):
             # Note: buffer_data is (H, W, 3), history is (W, H)
             for x in range(self._history_len):
                 rgb_col = self._lut[indices[x]]
-                self._buffer_data[:, x] = rgb_col[::-1] # Reverse for freq orientation
+                if self._buffer_data.shape[1] > x:
+                    self._buffer_data[:, x] = rgb_col[::-1]
 
     def get_settings(self):
         return {
@@ -75,7 +77,8 @@ class SpectrogramModule(BaseModule):
             "mode": self._mode,
             "show_piano": self._show_piano,
             "show_freq": self._show_freq,
-            "speed": self._speed
+            "speed": self._speed,
+            "db_floor": self._db_floor
         }
 
     def apply_settings(self, settings):
@@ -87,6 +90,7 @@ class SpectrogramModule(BaseModule):
         self._show_piano = settings.get("show_piano", self._show_piano)
         self._show_freq = settings.get("show_freq", self._show_freq)
         self._speed = float(settings.get("speed", self._speed))
+        self._db_floor = float(settings.get("db_floor", self._db_floor))
         # Re-initialize history if FFT size changed
         self._set_fft(self._fft_size)
 
@@ -156,6 +160,16 @@ class SpectrogramModule(BaseModule):
             a.setChecked(int(self._speed) == s)
             a.triggered.connect(lambda checked, v=s: setattr(self, "_speed", float(v)))
             sg.addAction(a)
+            
+        menu.addSeparator()
+        flm = menu.addMenu("Floor (Sensitivity)")
+        flg = QActionGroup(self)
+        for f in [-120, -90, -70, -50]:
+            a = flm.addAction(f"{f} dB")
+            a.setCheckable(True)
+            a.setChecked(int(self._db_floor) == f)
+            a.triggered.connect(lambda checked, v=f: setattr(self, "_db_floor", float(v)))
+            flg.addAction(a)
 
     def _set_fft(self, size):
         self._fft_size = size
@@ -170,13 +184,9 @@ class SpectrogramModule(BaseModule):
     def on_audio_data(self, data: np.ndarray):
         sig = (data[:, 0] + data[:, 1]) * 0.5 if data.shape[1] > 1 else data[:, 0]
         
-        # Calculate number of sub-steps based on speed
-        # Speed 1.0 = 1 step per block
-        # Speed 2.0 = 2 steps (50% overlap)
         n_steps = int(self._speed)
         step_size = len(sig) // n_steps
         
-        db_min, db_max = -90.0, 0.0
         freqs = fft_frequencies(self._fft_size, self.audio_engine.sample_rate)
         n_bins = min(self._fft_size // 2, len(freqs))
         px = map_frequencies_to_pixels(freqs[:n_bins], self._display_h, self._scale)
@@ -186,11 +196,7 @@ class SpectrogramModule(BaseModule):
             start = s * step_size
             end = start + self._fft_size
             
-            # If we don't have enough data for a full FFT at this step, 
-            # we might need to pad or skip. 
-            # For simplicity, we'll use a sliding window over the current block.
             if start + self._fft_size > len(sig):
-                # Fallback to just the end of the block
                 chunk = sig[-self._fft_size:]
             else:
                 chunk = sig[start:end]
@@ -200,6 +206,7 @@ class SpectrogramModule(BaseModule):
             if abs(self._tilt) > 0.1:
                 mag = mag + np.linspace(-self._tilt, self._tilt, len(mag))
 
+            db_min, db_max = self._db_floor, 0.0
             norm = np.clip((mag - db_min) / (db_max - db_min), 0, 1)
 
             column = np.zeros(self._display_h, dtype=np.float32)

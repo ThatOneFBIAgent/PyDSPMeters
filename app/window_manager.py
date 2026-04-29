@@ -202,9 +202,10 @@ class MainWindow(QMainWindow):
 
     SNAP_THRESHOLD = 20
 
-    def __init__(self, audio_engine: AudioEngine):
+    def __init__(self, audio_engine: AudioEngine, splash=None):
         super().__init__()
         self.audio_engine = audio_engine
+        self._splash = splash
         self._settings = SettingsManager.load()
 
         self.setWindowFlags(
@@ -214,8 +215,9 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(40, 40)
         self.resize(300, 650)
         self._loading_settings = True
+        self._is_ready = False # Track if fully initialized
         
-        # Loading Overlay
+        # Loading Overlay (Internal window fade-in)
         self._loading_overlay = LoadingOverlay(self)
         self._loading_overlay.resize(self.size())
         self._loading_overlay.raise_()
@@ -286,54 +288,73 @@ class MainWindow(QMainWindow):
         audio_s = self._settings.get("audio", {})
         self.audio_engine.gain_multiplier = audio_s.get("gain", 1.0)
         self.audio_engine.channels = audio_s.get("channels", 2)
-        self._current_device = audio_s.get("device_index")
+        self._target_device_id = audio_s.get("device_full_id") # Persistent identifier
+        self._current_device = audio_s.get("device_index") # Fallback index
         
         # Modules
         module_items = self._settings.get("modules")
         if module_items is None:
             module_items = ["oscilloscope", "loudness", "spectrum"]
             
-        for item in module_items:
-            if isinstance(item, str):
-                self.add_module(item)
-            else:
-                self.add_module(item.get("key"), item.get("config", {}))
+        for i, item in enumerate(module_items):
+            m_key = item if isinstance(item, str) else item.get("key")
+            m_config = {} if isinstance(item, str) else item.get("config", {})
+            
+            if self._splash:
+                self._splash.set_progress(60 + int(30 * (i / len(module_items))), f"Loading {m_key}...")
+                QApplication.processEvents()
+            
+            self.add_module(m_key, m_config)
             
         def finalize_load():
             self._loading_settings = False
             self.splitter.setVisible(True)
-            if "splitter_sizes" in self._settings:
-                self.splitter.setSizes(self._settings["splitter_sizes"])
-            else:
-                # Fair distribution if no saved sizes
-                total = self.splitter.width() if not self._layout_vertical else self.splitter.height()
-                if len(self._modules) > 0:
-                    self.splitter.setSizes([total // len(self._modules)] * len(self._modules))
             
-            if hasattr(self, "_loading_overlay"):
+            saved_sizes = self._settings.get("splitter_sizes", [])
+            if saved_sizes and len(saved_sizes) == self.splitter.count():
+                self.splitter.setSizes(saved_sizes)
+            else:
+                # Fair distribution if no saved sizes or mismatch
+                total = self.splitter.width() if not self._layout_vertical else self.splitter.height()
+                count = self.splitter.count()
+                if count > 0:
+                    self.splitter.setSizes([total // count] * count)
+            
+            if hasattr(self, "_loading_overlay") and self._loading_overlay:
                 self._loading_overlay.fade_out()
                     
         QTimer.singleShot(250, finalize_load)
 
-        if self._current_device is not None:
-            # Refresh devices to check if saved index is still valid
+        def start_audio():
             self._refresh_devices()
-            valid = any(d["index"] == self._current_device for d in self._devices)
-            if valid:
-                self.audio_engine.start(self._current_device)
-            else:
-                self._current_device = None
-                self.audio_engine.start(None)
-        else:
-            self.audio_engine.start(None)
+            best_index = None
+            
+            # Try to match by full_id first
+            if self._target_device_id:
+                for d in self._devices:
+                    if d["full_id"] == self._target_device_id:
+                        best_index = d["index"]
+                        break
+            
+            # Fallback to index if valid
+            if best_index is None and self._current_device is not None:
+                if any(d["index"] == self._current_device for d in self._devices):
+                    best_index = self._current_device
+            
+            self._current_device = best_index
+            self.audio_engine.start(best_index)
+            self._is_ready = True
+
+        QTimer.singleShot(100, start_audio)
 
     # ── Device Management ───────────────────────────────────────────────────
 
     def _refresh_devices(self):
         self._devices = AudioEngine.list_devices()
 
-    def _select_device(self, device_index):
+    def _select_device(self, device_index, full_id=None):
         self._current_device = device_index
+        self._target_device_id = full_id
         self.audio_engine.start(device_index)
 
     def _select_channels(self, count):
@@ -396,7 +417,8 @@ class MainWindow(QMainWindow):
                 action.setCheckable(True)
                 action.setChecked(self._current_device == d["index"])
                 idx = d["index"]
-                action.triggered.connect(lambda checked, i=idx: self._select_device(i))
+                full_id = d["full_id"]
+                action.triggered.connect(lambda checked, i=idx, fid=full_id: self._select_device(i, fid))
                 api_menu.addAction(action)
 
         menu.addSeparator()
@@ -786,6 +808,7 @@ class MainWindow(QMainWindow):
             },
             "audio": {
                 "device_index": self._current_device,
+                "device_full_id": getattr(self, "_target_device_id", None),
                 "gain": self.audio_engine.gain_multiplier,
                 "channels": self.audio_engine.channels
             },
