@@ -73,87 +73,73 @@ class LoadingOverlay(QWidget):
             if self._opacity <= 0:
                 self._fade_timer.stop()
                 self.hide()
+                if self.parent() and hasattr(self.parent(), "_on_overlay_finished"):
+                    self.parent()._on_overlay_finished()
                 self.deleteLater()
             self.update()
         self._fade_timer.timeout.connect(step)
         self._fade_timer.start(20)
 
 
-# ── Compact icon-style button ───────────────────────────────────────────────
 def _icon_btn(text, tooltip, size=22):
     btn = QPushButton(text)
     btn.setFixedSize(size, size)
     btn.setToolTip(tooltip)
-    btn.setStyleSheet(f"""
-        QPushButton {{
-            background: transparent; border: none;
-            color: {Colors.TEXT_DIM}; font-size: 10pt; padding: 0;
-        }}
-        QPushButton:hover {{ color: {Colors.ACCENT}; }}
-    """)
+    btn.setObjectName("titleBarButton")
     return btn
 
 
 class TitleBar(QFrame):
-    """Ultra-compact title bar: [DSP] — stretch — [+][⫞][⚙][─][×]"""
-
     def __init__(self, parent_window, parent=None):
         super().__init__(parent)
         self._window = parent_window
         self._drag_pos = None
         self.setFixedHeight(28)
         self.setObjectName("titleBar")
-        self.setStyleSheet(f"""
-            #titleBar {{
-                background: {Colors.BG_DARKEST};
-                border-bottom: 1px solid {Colors.BORDER};
-            }}
-        """)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6, 0, 4, 0)
         layout.setSpacing(2)
 
-        # Logo / title — compact
-        title = QLabel("DSP")
-        title.setFont(Fonts.header())
-        title.setStyleSheet(f"""
-            color: {Colors.ACCENT}; font-size: 10pt;
-            background: transparent; font-weight: bold;
-        """)
-        title.setFixedWidth(24)
-        layout.addWidget(title)
+        self.logo = QLabel("DSP")
+        self.logo.setFont(Fonts.header())
+        layout.addWidget(self.logo)
 
         layout.addStretch()
 
-        # Add module
         self.add_btn = _icon_btn("+", "Add module")
         layout.addWidget(self.add_btn)
 
-        # Layout toggle
-        self.layout_btn = _icon_btn("▥", "Vertical / Horizontal layout")
+        self.layout_btn = _icon_btn("▥", "Layout toggle")
         layout.addWidget(self.layout_btn)
 
-        # Settings gear (device + theme)
         self.gear_btn = _icon_btn("⚙", "Settings")
         layout.addWidget(self.gear_btn)
 
-        # Minimize
-        min_btn = _icon_btn("─", "Minimize")
-        min_btn.clicked.connect(self._window.showMinimized)
-        layout.addWidget(min_btn)
+        self.min_btn = _icon_btn("─", "Minimize")
+        self.min_btn.clicked.connect(self._window.showMinimized)
+        layout.addWidget(self.min_btn)
 
-        # Close
-        close_btn = _icon_btn("×", "Close")
-        close_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent; border: none;
-                color: {Colors.TEXT_DIM}; font-size: 10pt; padding: 0;
-            }}
-            QPushButton:hover {{ color: {Colors.RED}; }}
-        """)
-        close_btn.clicked.connect(self._window.close)
-        layout.addWidget(close_btn)
+        self.close_btn = _icon_btn("×", "Close")
+        self.close_btn.clicked.connect(self._window.close)
+        layout.addWidget(self.close_btn)
+        
+        self.update_theme()
+
+    def update_theme(self):
+        self.setStyleSheet(f"#titleBar {{ background: {Colors.BG_DARKEST}; border-bottom: 1px solid {Colors.BORDER}; }}")
+        self.logo.setStyleSheet(f"color: {Colors.ACCENT}; background: transparent; font-size: 10pt; font-weight: bold;")
+        
+        btn_style = f"QPushButton#titleBarButton {{ background: transparent; border: none; color: {Colors.TEXT_DIM}; " \
+                    f"font-size: 10pt; padding: 0; margin: 0; min-height: 0px; min-width: 0px; }} " \
+                    f"QPushButton#titleBarButton:hover {{ color: {Colors.ACCENT}; }}"
+        
+        for b in [self.add_btn, self.layout_btn, self.gear_btn, self.min_btn]:
+            b.setStyleSheet(btn_style)
+            
+        self.close_btn.setStyleSheet(f"QPushButton#titleBarButton {{ background: transparent; border: none; color: {Colors.TEXT_DIM}; "
+                                    f"font-size: 10pt; padding: 0; margin: 0; min-height: 0px; min-width: 0px; }} "
+                                    f"QPushButton#titleBarButton:hover {{ color: {Colors.RED}; }}")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -219,6 +205,7 @@ class MainWindow(QMainWindow):
     def __init__(self, audio_engine: AudioEngine):
         super().__init__()
         self.audio_engine = audio_engine
+        self._settings = SettingsManager.load()
 
         self.setWindowFlags(
             Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
@@ -247,22 +234,14 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.title_bar)
 
         # Module splitter
-        self._layout_vertical = True
         self.splitter = QSplitter(Qt.Vertical)
-        self.splitter.setVisible(False) # Hide until loaded to prevent flash
+        self.splitter.setVisible(False)
         self.splitter.setHandleWidth(4)
         self.splitter.setChildrenCollapsible(False)
-        self.splitter.setStyleSheet(f"""
-            QSplitter::handle {{
-                background: {Colors.BORDER};
-                border-radius: 2px;
-                margin: 1px 30px;
-            }}
-            QSplitter::handle:hover {{
-                background: {Colors.ACCENT};
-            }}
-        """)
         main_layout.addWidget(self.splitter)
+        
+        self._layout_vertical = True
+        self._update_ui_styles()
 
         # Resize grip
         self._grip = ResizeGrip(self)
@@ -275,8 +254,7 @@ class MainWindow(QMainWindow):
         self.title_bar.layout_btn.clicked.connect(self._toggle_layout)
         self.title_bar.gear_btn.clicked.connect(self._show_gear_menu)
 
-        # Load settings
-        self._settings = SettingsManager.load()
+        # Apply window settings
         
         # Apply window settings
         win_s = self._settings.get("window", {})
@@ -298,6 +276,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(build_stylesheet())
         
         self._show_headers = win_s.get("show_headers", True)
+        self._auto_hide_ui = win_s.get("auto_hide_ui", False)
         
         # Divider settings (must be after apply_theme to use correct BORDER color)
         self.splitter.setHandleWidth(win_s.get("divider_width", 4))
@@ -496,6 +475,12 @@ class MainWindow(QMainWindow):
         hdr_action.triggered.connect(self._toggle_headers)
         menu.addAction(hdr_action)
         
+        ghost_action = QAction("Auto-Hide Title Bar", self)
+        ghost_action.setCheckable(True)
+        ghost_action.setChecked(self._auto_hide_ui)
+        ghost_action.triggered.connect(self._toggle_ghost_mode)
+        menu.addAction(ghost_action)
+        
         menu.addSeparator()
 
         # Theme submenu
@@ -553,20 +538,28 @@ class MainWindow(QMainWindow):
         for m in self._modules:
             m.header.setVisible(show)
 
+    def _toggle_ghost_mode(self, enabled: bool):
+        self._auto_hide_ui = enabled
+        self._update_ghost_mode()
+
     def _apply_theme(self, name: str):
         apply_theme(name, self._settings.get("ui", {}).get("color_overrides", {}))
         app = QApplication.instance()
         if app:
-            from app.theme import build_stylesheet
             app.setStyleSheet(build_stylesheet())
-        # Force repaint on all modules
-        self.update()
+        self._update_ui_styles()
         for m in self._modules:
             if hasattr(m, "on_theme_changed"):
                 m.on_theme_changed()
-            m.update()
-            m.canvas.update()
+            m.update_theme() # New helper or manual update
         self._update_ghost_mode()
+
+    def _update_ui_styles(self):
+        # Title Bar & Buttons
+        if hasattr(self, "title_bar"):
+            self.title_bar.update_theme()
+        
+        # Splitter handle
         self._set_divider_opacity(self._settings.get("window", {}).get("divider_opacity", 100))
 
     def _set_divider_width(self, w):
@@ -603,17 +596,14 @@ class MainWindow(QMainWindow):
         """)
 
     def _update_ghost_mode(self):
-        from app.theme import current_theme_name
+        # Ghost mode active if manually toggled OR if it's a 'Ghost/Glass/Transparent' theme
         theme = current_theme_name()
-        # Themes that need mouse-over for title bar / grip visibility
-        is_transparent = theme in ["Transparent Ghost", "Glass"]
+        is_transparent = "Transparent" in theme or "Glass" in theme
+        ghost_active = self._auto_hide_ui or is_transparent
         
-        if is_transparent:
-            self.title_bar.setVisible(self.underMouse())
-            self._grip.setVisible(self.underMouse())
-        else:
-            self.title_bar.setVisible(True)
-            self._grip.setVisible(True)
+        show = not ghost_active or self.underMouse()
+        self.title_bar.setVisible(show)
+        self._grip.setVisible(show)
 
     def enterEvent(self, event):
         self._update_ghost_mode()
@@ -718,7 +708,7 @@ class MainWindow(QMainWindow):
             """)
 
     # ── Snapping ────────────────────────────────────────────────────────────
-
+    
     def snap_to_edge(self):
         screen = QApplication.primaryScreen()
         if not screen:
@@ -752,8 +742,14 @@ class MainWindow(QMainWindow):
             self.width() - self._grip.width() - 2,
             self.height() - self._grip.height() - 2,
         )
-        if hasattr(self, "_loading_overlay") and self._loading_overlay.isVisible():
-            self._loading_overlay.resize(self.size())
+        if hasattr(self, "_loading_overlay") and self._loading_overlay and self._loading_overlay.isVisible():
+            try:
+                self._loading_overlay.resize(self.size())
+            except:
+                self._loading_overlay = None
+
+    def _on_overlay_finished(self):
+        self._loading_overlay = None
 
     def contextMenuEvent(self, event):
         self._show_gear_menu()
@@ -769,6 +765,7 @@ class MainWindow(QMainWindow):
                 "height": self.height(),
                 "vertical_layout": self._layout_vertical,
                 "show_headers": self._show_headers,
+                "auto_hide_ui": self._auto_hide_ui,
                 "divider_width": self.splitter.handleWidth(),
                 "divider_opacity": self._settings.get("window", {}).get("divider_opacity", 100)
             },

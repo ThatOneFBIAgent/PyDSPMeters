@@ -212,6 +212,16 @@ class LoudnessModule(BaseModule):
             elif meter_idx == 1: vals, raw = self._disp_st, (self._lufs_st if self._mode == "LUFS" else self._rms_st)
             else:                vals, raw = self._disp_peak, self._peak
             
+            # Determine color based on theme
+            if self._color_theme == "Multi-Band":
+                if meter_idx == 0: pc_base = Colors.BAND_LOW
+                elif meter_idx == 1: pc_base = Colors.BAND_MID
+                else: pc_base = Colors.BAND_HIGH
+            elif self._color_theme == "Accent":
+                pc_base = Colors.ACCENT
+            else:
+                pc_base = None # Use classic signal logic
+
             # Draw Bars
             if self._show_all_channels:
                 ch_count = self.audio_engine.channels
@@ -221,11 +231,8 @@ class LoudnessModule(BaseModule):
                     painter.fillRect(QRectF(bx, bar_y, bw, bar_h), QColor(Colors.BG_INPUT))
                     f = np.clip((vals[ch] - db_min) / (db_max - db_min), 0, 1)
                     if f > 0:
-                        pc = Colors.GREEN
-                        if raw[ch] > -6: pc = Colors.YELLOW
-                        if raw[ch] > -1: pc = Colors.RED
+                        pc = pc_base or (Colors.RED if raw[ch] > -1 else (Colors.YELLOW if raw[ch] > -6 else Colors.GREEN))
                         painter.fillRect(QRectF(bx, bar_y + bar_h - f * bar_h, bw, f * bar_h), QColor(pc))
-                # Value (combined max for badge)
                 v_max = np.max(raw)
             else:
                 v_avg = np.mean(vals)
@@ -233,28 +240,14 @@ class LoudnessModule(BaseModule):
                 f = np.clip((v_avg - db_min) / (db_max - db_min), 0, 1)
                 if f > 0:
                     v_raw = np.max(raw)
-                    pc = Colors.GREEN
-                    if v_raw > -6: pc = Colors.YELLOW
-                    if v_raw > -1: pc = Colors.RED
+                    pc = pc_base or (Colors.CLIP_LED if v_raw > -1 else (Colors.PEAK_LED if v_raw > -6 else Colors.METER_LOW))
                     painter.fillRect(QRectF(gx, bar_y + bar_h - f * bar_h, group_w, f * bar_h), QColor(pc))
                 v_max = np.max(raw)
             
             # Value Badge
-            painter.setFont(Fonts.value())
+            ps_col = pc_base or (Colors.CLIP_LED if v_max > -1 else (Colors.PEAK_LED if v_max > -6 else Colors.METER_LOW))
             ps = f"{v_max:.0f}" if v_max > -100 else "-∞"
-            
-            if self._color_theme == "Multi-Band":
-                if meter_idx == 0: pc = Colors.BAND_LOW
-                elif meter_idx == 1: pc = Colors.BAND_MID
-                else: pc = Colors.BAND_HIGH
-            elif self._color_theme == "Accent":
-                pc = Colors.ACCENT
-            else:
-                pc = Colors.GREEN
-                if v_max > -6: pc = Colors.YELLOW
-                if v_max > -1: pc = Colors.RED
-            
-            self.draw_text_badge(painter, QRectF(gx, bar_y + bar_h + 2, group_w, val_h), Qt.AlignCenter, ps, QColor(pc))
+            self.draw_text_badge(painter, QRectF(gx, bar_y + bar_h + 2, group_w, val_h), Qt.AlignCenter, ps, QColor(ps_col))
 
         # Vertical Mode Indicator (Horizontal strip at bottom)
         mode_rect = QRectF(m, h - 14, w - m*2, 10)
@@ -337,7 +330,5 @@ class LoudnessModule(BaseModule):
             # Value Badge
             painter.setFont(Fonts.value())
             ps = f"{v_max:.1f}" if v_max > -100 else "-∞"
-            pc = Colors.GREEN
-            if v_max > -6: pc = Colors.YELLOW
-            if v_max > -1: pc = Colors.RED
-            self.draw_text_badge(painter, QRectF(bar_x + bar_w + 2, ry, val_w, row_h), Qt.AlignVCenter | Qt.AlignRight, ps, QColor(pc))
+            ps_col = Colors.CLIP_LED if v_max > -1 else (Colors.PEAK_LED if v_max > -6 else Colors.METER_LOW)
+            self.draw_text_badge(painter, QRectF(bar_x + bar_w + 2, ry, val_w, row_h), Qt.AlignVCenter | Qt.AlignRight, ps, QColor(ps_col))

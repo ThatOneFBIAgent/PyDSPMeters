@@ -209,33 +209,33 @@ class SpectrogramModule(BaseModule):
             self._col_idx += 1
 
     def _render(self, painter, w, h):
-        if self._col_idx < 1:
-            return
+        if self._col_idx < 1: return
 
-        # Always render the full history buffer for a stable-width display.
-        # np.roll reorders the circular buffer so the newest column is on
-        # the right edge and the oldest (or empty/black) is on the left.
-        write_head = self._col_idx % self._history_len
-        ordered = np.roll(self._history, -write_head, axis=0)
+        if not hasattr(self, "_buffer_img") or self._buffer_img.height() != self._display_h:
+            self._buffer_data = np.zeros((self._display_h, self._history_len, 3), dtype=np.uint8)
+            self._buffer_img = QImage(self._buffer_data.data, self._history_len, self._display_h, 
+                                     self._history_len * 3, QImage.Format_RGB888)
 
-        # Transpose: rows = freq bins (low freq at bottom), cols = time
-        display = ordered.T[::-1]
-
-        # Numpy LUT colormap lookup (fast)
-        indices = np.clip((display * 255).astype(np.int32), 0, 255)
-        rgb = self._lut[indices]
-        rgb = np.ascontiguousarray(rgb)
-        self._img_cache = rgb  # prevent GC while QImage references this memory
-
-        qimg = QImage(rgb.data, rgb.shape[1], rgb.shape[0],
-                      rgb.shape[1] * 3, QImage.Format_RGB888)
-
-        if self._orientation == "Vertical":
+        # Colormap newest column
+        write_head = (self._col_idx - 1) % self._history_len
+        column_data = self._history[write_head]
+        indices = np.clip((column_data * 255).astype(np.int32), 0, 255)
+        rgb_col = self._lut[indices]
+        self._buffer_data[:, write_head] = rgb_col[::-1]
+        
+        # Draw circular segments
+        head = self._col_idx % self._history_len
+        from PySide6.QtCore import QRect
+        
+        len_1 = self._history_len - head
+        w_1 = int(w * (len_1 / self._history_len))
+        
+        if self._orientation == "Horizontal":
+            painter.drawImage(QRect(0, 0, w_1, h), self._buffer_img, QRect(head, 0, len_1, self._display_h))
+            painter.drawImage(QRect(w_1, 0, w - w_1, h), self._buffer_img, QRect(0, 0, head, self._display_h))
+        else:
             from PySide6.QtGui import QTransform
-            qimg = qimg.transformed(QTransform().rotate(90))
-
-        scaled = qimg.scaled(w, h, Qt.IgnoreAspectRatio, Qt.FastTransformation)
-        painter.drawImage(0, 0, scaled)
+            painter.drawImage(QRect(0, 0, w, h), self._buffer_img.transformed(QTransform().rotate(90)))
 
         # Frequency overlay lines
         if self._show_freq:

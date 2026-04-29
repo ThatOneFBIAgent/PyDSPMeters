@@ -23,13 +23,6 @@ class ModuleHeader(QFrame):
         super().__init__(parent)
         self.setFixedHeight(26)
         self.setObjectName("moduleHeader")
-        self.setStyleSheet(f"""
-            #moduleHeader {{
-                background: {Colors.BG_HEADER};
-                border-bottom: 1px solid {Colors.BORDER};
-                border-radius: 0px;
-            }}
-        """)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 0, 4, 0)
@@ -37,15 +30,21 @@ class ModuleHeader(QFrame):
 
         self._title = QLabel(title)
         self._title.setFont(Fonts.header())
-        self._title.setStyleSheet(f"color: {Colors.ACCENT}; background: transparent; font-size: 8pt; font-weight: normal;")
         layout.addWidget(self._title)
 
         layout.addStretch()
 
-        # Close button
         self._close_btn = QPushButton("✕")
         self._close_btn.setFixedSize(22, 22)
         self._close_btn.setToolTip("Remove module")
+        self._close_btn.clicked.connect(self.close_requested.emit)
+        layout.addWidget(self._close_btn)
+
+        self.update_theme()
+
+    def update_theme(self):
+        self.setStyleSheet(f"#moduleHeader {{ background: {Colors.BG_HEADER}; border-bottom: 1px solid {Colors.BORDER}; }}")
+        self._title.setStyleSheet(f"color: {Colors.ACCENT}; background: transparent; font-size: 8pt; font-weight: normal;")
         self._close_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
@@ -56,8 +55,6 @@ class ModuleHeader(QFrame):
             }}
             QPushButton:hover {{ color: {Colors.RED}; }}
         """)
-        self._close_btn.clicked.connect(self.close_requested.emit)
-        layout.addWidget(self._close_btn)
 
     def set_title(self, title: str):
         self._title.setText(title)
@@ -109,39 +106,32 @@ class BaseModule(QWidget):
         super().__init__(parent)
         self.audio_engine = audio_engine
         self._title = title
-
         self.setObjectName("baseModule")
-        self.setStyleSheet(f"""
-            #baseModule {{
-                background: {Colors.BG_DARK};
-                border: 1px solid {Colors.BORDER};
-                border-radius: 4px;
-            }}
-        """)
 
-        # Main layout
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Header
         self.header = ModuleHeader(title)
         self.header.close_requested.connect(lambda: self.close_requested.emit(self))
         layout.addWidget(self.header)
 
-        # Render canvas
         self.canvas = RenderCanvas()
         layout.addWidget(self.canvas)
 
-        # Connect to audio engine
+        self.update_theme()
         self.audio_engine.data_ready.connect(self.on_audio_data)
 
-        # Refresh timer
         from PySide6.QtCore import QTimer
         self._refresh_timer = QTimer(self)
-        self._refresh_timer.setInterval(16)  # ~60 fps
+        self._refresh_timer.setInterval(16)
         self._refresh_timer.timeout.connect(self.canvas.update)
         self._refresh_timer.start()
+
+    def update_theme(self):
+        self.setStyleSheet(f"#baseModule {{ background: {Colors.BG_DARK}; border: 1px solid {Colors.BORDER}; border-radius: 4px; }}")
+        if hasattr(self, "header"):
+            self.header.update_theme()
 
     def build_context_menu(self, menu):
         """Override to add QActions to the module's right-click menu."""

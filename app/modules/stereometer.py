@@ -173,32 +173,32 @@ class StereometerModule(BaseModule):
 
     def _draw_dots(self, painter, left, right, cx, cy, radius, color, alpha):
         n = len(left)
-        # Limit to ~1000 points for performance, but at least every other sample
         step = max(1, n // 1000)
         
-        points = []
-        for i in range(0, n, step):
-            lv, rv = float(left[i]), float(right[i])
-            if self._display_mode == "Lissajous":
-                x = cx + (lv + rv) * 0.5 * radius
-                y = cy - (lv - rv) * 0.5 * radius
-            elif self._display_mode == "Linear":
-                x, y = cx + rv * radius, cy - lv * radius
-            else:
-                s = 3.0
-                x = cx + (np.tanh(lv * s) + np.tanh(rv * s)) * 0.5 * radius
-                y = cy - (np.tanh(lv * s) - np.tanh(rv * s)) * 0.5 * radius
-            points.append(QPointF(x, y))
+        # Vectorized coordinate calculation
+        l_seg = left[::step]
+        r_seg = right[::step]
+        
+        if self._display_mode == "Lissajous":
+            xs = cx + (l_seg + r_seg) * 0.5 * radius
+            ys = cy - (l_seg - r_seg) * 0.5 * radius
+        elif self._display_mode == "Linear":
+            xs = cx + r_seg * radius
+            ys = cy - l_seg * radius
+        else:
+            s = 3.0
+            xs = cx + (np.tanh(l_seg * s) + np.tanh(r_seg * s)) * 0.5 * radius
+            ys = cy - (np.tanh(l_seg * s) - np.tanh(r_seg * s)) * 0.5 * radius
+        
+        points = [QPointF(xs[i], ys[i]) for i in range(len(xs))]
 
         if not points:
             return
 
         if color is None:
-            # If color mode is RGB, we still need to draw individually or group by color
-            # For performance, we'll just use a single color for now if RGB is active but too slow
             painter.setPen(QPen(QColor(Colors.ACCENT), 1.5))
-            painter.drawPoints(points)
         else:
             dc = QColor(color); dc.setAlpha(alpha)
             painter.setPen(QPen(dc, 1.5))
-            painter.drawPoints(points)
+        
+        painter.drawPoints(points)

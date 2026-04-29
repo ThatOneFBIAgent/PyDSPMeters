@@ -261,7 +261,7 @@ class VUMeterModule(BaseModule):
         painter.setFont(Fonts.small())
         if self._show_peak:
             lit = self._peak_lit_l or self._peak_lit_r
-            pc = QColor(Colors.YELLOW) if lit else QColor(Colors.BG_INPUT)
+            pc = QColor(Colors.PEAK_LED) if lit else QColor(Colors.BG_INPUT)
             painter.setBrush(QBrush(pc))
             painter.setPen(QPen(QColor(Colors.BORDER), 1))
             painter.drawEllipse(QPointF(12, 12), 4, 4)
@@ -271,7 +271,7 @@ class VUMeterModule(BaseModule):
                 
         if self._show_clip:
             lit = self._clip_lit_l or self._clip_lit_r
-            cc = QColor(Colors.RED) if lit else QColor(Colors.BG_INPUT)
+            cc = QColor(Colors.CLIP_LED) if lit else QColor(Colors.BG_INPUT)
             painter.setBrush(QBrush(cc))
             painter.setPen(QPen(QColor(Colors.BORDER), 1))
             painter.drawEllipse(QPointF(w - 12, 12), 4, 4)

@@ -158,19 +158,39 @@ class WaveformModule(BaseModule):
                     self._draw_wave(painter, max_all[:, idx], min_all[:, idx], rms_all[:, idx], colors[idx % len(colors)], mid_y, h)
 
     def _draw_wave(self, painter, maxs, mins, rmss, base_color, mid_y, h):
+        from PySide6.QtCore import QLineF
         h_factor = h * 0.45
+        
+        # Optimized drawing: Group lines by color to minimize pen changes
+        base_lines = []
+        yellow_lines = []
+        red_lines = []
+        peak_lines = []
+        
         for x in range(len(maxs)):
             amp = rmss[x] * 2.5
-            col = QColor(base_color)
-            if amp > 0.6: col = QColor(Colors.YELLOW)
-            if amp > 0.9: col = QColor(Colors.RED)
-            
-            # Draw peak outline (dimmer)
-            pc = QColor(col); pc.setAlpha(60)
-            painter.setPen(QPen(pc, 1))
-            painter.drawLine(x, int(mid_y - maxs[x] * h_factor), x, int(mid_y - mins[x] * h_factor))
-            
-            # Draw RMS core (solid)
             h_rms = rmss[x] * h_factor
-            painter.setPen(QPen(col, 1))
-            painter.drawLine(x, int(mid_y - h_rms), x, int(mid_y + h_rms))
+            
+            line = QLineF(x, mid_y - h_rms, x, mid_y + h_rms)
+            if amp > 0.9: red_lines.append(line)
+            elif amp > 0.6: yellow_lines.append(line)
+            else: base_lines.append(line)
+            
+            # Peak outline (always base_color but transparent)
+            peak_lines.append(QLineF(x, mid_y - maxs[x] * h_factor, x, mid_y - mins[x] * h_factor))
+
+        # 1. Draw Peaks (underneath)
+        pc = QColor(base_color); pc.setAlpha(40)
+        painter.setPen(QPen(pc, 1))
+        painter.drawLines(peak_lines)
+        
+        # 2. Draw RMS Cores (grouped by color)
+        if base_lines:
+            painter.setPen(QPen(QColor(base_color), 1))
+            painter.drawLines(base_lines)
+        if yellow_lines:
+            painter.setPen(QPen(QColor(Colors.YELLOW), 1))
+            painter.drawLines(yellow_lines)
+        if red_lines:
+            painter.setPen(QPen(QColor(Colors.RED), 1))
+            painter.drawLines(red_lines)
