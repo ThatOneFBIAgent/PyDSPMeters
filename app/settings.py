@@ -9,12 +9,26 @@ class SettingsManager:
     
     @staticmethod
     def get_settings_path():
-        # If running as a bundled executable, put settings next to the exe
-        if getattr(sys, 'frozen', False):
-            base_path = os.path.dirname(sys.executable)
+        """
+        Determines the correct path for settings.json in both dev and compiled modes.
+        
+        - Dev mode:   <project_root>/settings.json  (next to main.py)
+        - Compiled:   <exe_directory>/settings.json  (next to the .exe)
+        """
+        # Check for Nuitka compiled environment
+        # __compiled__ is injected by Nuitka at build time
+        is_compiled = "__compiled__" in dir(__builtins__) or hasattr(__builtins__, "__compiled__")
+        
+        if is_compiled:
+            # sys.argv[0] is the most reliable way to get the .exe's location,
+            # regardless of CWD or how the process was launched
+            base_path = os.path.dirname(os.path.abspath(sys.argv[0]))
         else:
+            # Dev mode: walk up from this file (app/settings.py) to project root
             base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return os.path.join(base_path, SETTINGS_FILE)
+
+        settings_path = os.path.join(base_path, SETTINGS_FILE)
+        return settings_path
 
     @classmethod
     def load(cls):
