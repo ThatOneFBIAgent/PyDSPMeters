@@ -340,7 +340,7 @@ def apply_theme(name: str, overrides: dict = None):
     # Baseline defaults (Midnight) to ensure we don't leak specialized colors from previous themes
     defaults = THEME_PRESETS["Midnight"]
     # Keys that are often missing in simpler themes but should reset
-    reset_keys = ["BAND_LOW", "BAND_MID", "BAND_HIGH", "HEATMAP_STOPS", "METER_LOW", "METER_MID", "METER_HIGH", "PEAK_LED", "CLIP_LED"]
+    reset_keys = ["BAND_LOW", "BAND_MID", "BAND_HIGH", "HEATMAP_STOPS", "METER_LOW", "METER_MID", "METER_HIGH", "PEAK_LED", "CLIP_LED", "BORDER", "BORDER_ACCENT"]
     
     # 1. Reset baseline for specific keys from Defaults
     for key in reset_keys:

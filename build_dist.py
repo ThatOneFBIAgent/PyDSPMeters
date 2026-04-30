@@ -53,7 +53,17 @@ def build():
         # Run the build
         subprocess.check_call(cmd)
         print("\n--- Build Successful! ---")
-        print(f"Your portable executable is located at: {os.path.abspath('dist/PyDSPMeters.exe')}")
+        
+        # 4. Post-build cleanup/copy
+        exe_path = os.path.abspath('dist/PyDSPMeters.exe')
+        dist_dir = os.path.dirname(exe_path)
+        
+        if os.path.exists("settings.json"):
+            print(f"Copying 'settings.json' to {dist_dir}...")
+            shutil.copy2("settings.json", os.path.join(dist_dir, "settings.json"))
+        
+        print(f"\nYour portable executable is located at: {exe_path}")
+        print("Note: 'settings.json' has been copied next to the executable to preserve your configuration.")
         
     except subprocess.CalledProcessError as e:
         print(f"\n--- Build Failed! ---")

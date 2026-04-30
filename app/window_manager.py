@@ -602,33 +602,51 @@ class MainWindow(QMainWindow):
         win_s = self._settings.setdefault("window", {})
         win_s["divider_opacity"] = alpha_pct
         
-        # Ensure we pull the fresh hex from the current theme
-        base_hex = Colors.BORDER
-        # If it's an 8-char hex (AARRGGBB), we strip the old alpha to avoid stacking
-        if len(base_hex) == 9 and base_hex.startswith("#"):
-            base_hex = "#" + base_hex[3:]
+        # 1. Parse base color from theme
+        b_hex = Colors.BORDER
+        if b_hex.startswith("#") and len(b_hex) == 9:
+            c = QColor()
+            c.setAlpha(int(b_hex[1:3], 16))
+            c.setRed(int(b_hex[3:5], 16))
+            c.setGreen(int(b_hex[5:7], 16))
+            c.setBlue(int(b_hex[7:9], 16))
+        else:
+            c = QColor(b_hex)
             
-        c = QColor(base_hex)
-        c.setAlpha(int(255 * alpha_pct / 100))
+        c.setAlpha(int(c.alpha() * alpha_pct / 100))
         color_str = f"rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()})"
         
         h_c = QColor(Colors.ACCENT)
-        h_c.setAlpha(int(255 * alpha_pct / 100))
+        h_c.setAlpha(int(h_c.alpha() * alpha_pct / 100))
         hover_str = f"rgba({h_c.red()}, {h_c.green()}, {h_c.blue()}, {h_c.alpha()})"
 
-        if self._layout_vertical:
-            margin = "1px 30px"
+        # 2. Apply local stylesheet to the splitter
+        # We use different margins based on orientation to keep it clean
+        if self.splitter.orientation() == Qt.Vertical:
+            margin = "1px 40px" # Horizontal bar
         else:
-            margin = "30px 1px"
+            margin = "40px 1px" # Vertical bar
             
+        theme = current_theme_name()
+        is_transparent = "Transparent" in theme or "Glass" in theme
+        
+        if is_transparent:
+            bg_rgba = "transparent"
+        else:
+            bg_c = QColor(Colors.BG_DARKEST)
+            bg_rgba = f"rgba({bg_c.red()}, {bg_c.green()}, {bg_c.blue()}, {bg_c.alpha()})"
+
         self.splitter.setStyleSheet(f"""
+            QSplitter {{
+                background: {bg_rgba};
+            }}
             QSplitter::handle {{
-                background: {color_str};
-                border-radius: 2px;
+                background-color: {color_str if c.alpha() > 0 else "transparent"};
                 margin: {margin};
+                border-radius: 2px;
             }}
             QSplitter::handle:hover {{
-                background: {hover_str};
+                background-color: {hover_str};
             }}
         """)
 
@@ -725,24 +743,13 @@ class MainWindow(QMainWindow):
             self.splitter.setOrientation(Qt.Vertical)
             self.title_bar.layout_btn.setText("▥")
             self.title_bar.layout_btn.setToolTip("Switch to Horizontal layout")
-            self.splitter.setStyleSheet(f"""
-                QSplitter::handle {{
-                    background: {Colors.BORDER}; border-radius: 2px;
-                    margin: 1px 30px;
-                }}
-                QSplitter::handle:hover {{ background: {Colors.ACCENT}; }}
-            """)
         else:
             self.splitter.setOrientation(Qt.Horizontal)
             self.title_bar.layout_btn.setText("▤")
             self.title_bar.layout_btn.setToolTip("Switch to Vertical layout")
-            self.splitter.setStyleSheet(f"""
-                QSplitter::handle {{
-                    background: {Colors.BORDER}; border-radius: 2px;
-                    margin: 30px 1px;
-                }}
-                QSplitter::handle:hover {{ background: {Colors.ACCENT}; }}
-            """)
+            
+        # Refresh divider style to update margins and respect opacity
+        self._set_divider_opacity(self._settings.get("window", {}).get("divider_opacity", 100))
 
     # ── Snapping ────────────────────────────────────────────────────────────
     
@@ -750,25 +757,56 @@ class MainWindow(QMainWindow):
         screen = QApplication.primaryScreen()
         if not screen:
             return
+        
         avail = screen.availableGeometry()
+        full = screen.geometry()
         x, y = self.pos().x(), self.pos().y()
         w, h = self.width(), self.height()
         t = self.SNAP_THRESHOLD
 
-        if abs(x - avail.left()) < t:
-            x = avail.left()
-        elif abs(x + w - avail.right()) < t:
-            x = avail.right() - w
+        # ── Horizontal Snapping (Position & Size) ───────────────────────────
+        
+        # Snap width to full/avail width
+        if abs(w - avail.width()) < t:
+            w = avail.width()
+        elif abs(w - full.width()) < t:
+            w = full.width()
 
-        if abs(y - avail.top()) < t:
-            y = avail.top()
-        elif abs(y + h - avail.bottom()) < t:
-            y = avail.bottom() - h
+        # Snap X position
+        # Prioritize 'avail' (above taskbar) but allow 'full' (behind taskbar)
+        for rect in [avail, full]:
+            if abs(x - rect.left()) < t:
+                x = rect.left()
+                break
+            if abs(x + w - rect.right()) < t:
+                x = rect.right() - w
+                break
 
-        cx = avail.left() + avail.width() // 2
+        # Center horizontal
+        cx = full.left() + full.width() // 2
         if abs(x + w // 2 - cx) < t:
             x = cx - w // 2
 
+        # ── Vertical Snapping (Position & Size) ─────────────────────────────
+        
+        # Snap height to full/avail height
+        if abs(h - avail.height()) < t:
+            h = avail.height()
+        elif abs(h - full.height()) < t:
+            h = full.height()
+
+        # Snap Y position
+        for rect in [avail, full]:
+            if abs(y - rect.top()) < t:
+                y = rect.top()
+                break
+            if abs(y + h - rect.bottom()) < t:
+                y = rect.bottom() - h
+                break
+
+        # Apply changes
+        if (w, h) != (self.width(), self.height()):
+            self.resize(w, h)
         self.move(x, y)
 
     # ── Events ──────────────────────────────────────────────────────────────
