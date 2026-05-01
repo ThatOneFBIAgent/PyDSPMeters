@@ -8,18 +8,6 @@
 
 PyDSPMeters is a modular, ultra-responsive audio monitoring suite designed to rival professional desktop solutions. It provides a flexible, always-on-top interface for engineers, producers, and audiophiles who need critical signal feedback without sacrificing screen real estate.
 
-## ♾️ Infinite Modularity
-
-![1](demos/1.png)
-![2](demos/2.png)
-![3](demos/3.png)
-![4](demos/4.png)
-![5](demos/5.png)
-![6](demos/6.png)
-![7](demos/7.png)
-![8](demos/8.png)
-![9](demos/9.png)
-
 ---
 
 ## ⚡ Engineered for Performance
@@ -42,6 +30,16 @@ PyDSPMeters adapts to *your* workflow, not the other way around.
 *   **Omni-Layout**: Seamlessly toggle between **Vertical** and **Horizontal** modes. Fit the meters into a side-bar, a bottom-strip, or a dedicated second monitor.
 *   **Ghost Mode**: Transparent and Glass presets combined with an auto-hiding title bar allow the meters to "float" over your DAW or editor.
 *   **Edge Snapping**: Intelligent window management that locks to screen edges for a pixel-perfect setup.
+
+![1](demos/1.png)
+![2](demos/2.png)
+![3](demos/3.png)
+![4](demos/4.png)
+![5](demos/5.png)
+![6](demos/6.png)
+![7](demos/7.png)
+![8](demos/8.png)
+![9](demos/9.png)
 
 ---
 
