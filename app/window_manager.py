@@ -279,9 +279,11 @@ class MainWindow(QMainWindow):
         
         self._show_headers = win_s.get("show_headers", True)
         self._auto_hide_ui = win_s.get("auto_hide_ui", False)
+        self._update_ghost_mode()
         
         # Divider settings (must be after apply_theme to use correct BORDER color)
-        self.splitter.setHandleWidth(win_s.get("divider_width", 4))
+        self._divider_width = win_s.get("divider_width", 4)
+        self.splitter.setHandleWidth(int(math.ceil(self._divider_width)))
         self._set_divider_opacity(win_s.get("divider_opacity", 100))
 
         # Audio settings
@@ -383,25 +385,51 @@ class MainWindow(QMainWindow):
             QLineEdit {{ background: {Colors.BG_INPUT}; border: 1px solid {Colors.BORDER}; border-radius: 3px; padding: 1px; color: {Colors.TEXT}; }}
         """)
 
-        def add_slider_setting(m, label, min_v, max_v, current_v, callback, is_float=False):
+        def add_slider_setting(m, label, min_v, max_v, current_v, callback, is_float=False, step=1):
             action = QWidgetAction(self)
             widget = QWidget()
             layout = QHBoxLayout(widget)
             layout.setContentsMargins(10, 2, 10, 2)
             lbl = QLabel(label); lbl.setFixedWidth(100)
-            slider = QSlider(Qt.Horizontal); slider.setRange(min_v, max_v)
-            slider.setValue(int(current_v * 100) if is_float else current_v)
+            
+            scale = int(1 / step) if step != 1 and not is_float else 1
+            
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(int(min_v * scale), int(max_v * scale))
+            if is_float:
+                slider.setValue(int(current_v * 100))
+            else:
+                slider.setValue(int(current_v * scale))
             slider.setFixedWidth(110)
-            val_edit = QLineEdit(str(slider.value()))
-            val_edit.setFixedWidth(35); val_edit.setAlignment(Qt.AlignCenter); val_edit.setValidator(QIntValidator(min_v, max_v))
+            
+            def format_val(v):
+                if is_float: return str(v)
+                real_v = v / scale
+                return f"{real_v:g}" if step != 1 else str(int(real_v))
+                
+            val_edit = QLineEdit(format_val(slider.value()))
+            val_edit.setFixedWidth(35); val_edit.setAlignment(Qt.AlignCenter)
+            if step == 1 and not is_float:
+                val_edit.setValidator(QIntValidator(min_v, max_v))
+                
             def on_slider(v):
-                val_edit.setText(str(v))
-                callback(v / 100.0 if is_float else v)
+                val_edit.setText(format_val(v))
+                if is_float: callback(v / 100.0)
+                else: callback(v / scale)
+                
             def on_edit():
                 try:
-                    v = int(val_edit.text()); v = max(min_v, min(max_v, v))
-                    slider.setValue(v); callback(v / 100.0 if is_float else v)
+                    text_v = float(val_edit.text())
+                    if is_float:
+                        v = int(text_v)
+                        v = max(int(min_v), min(int(max_v), v))
+                        slider.setValue(v); callback(v / 100.0)
+                    else:
+                        v = int(text_v * scale)
+                        v = max(int(min_v * scale), min(int(max_v * scale), v))
+                        slider.setValue(v); callback(v / scale)
                 except: pass
+                
             slider.valueChanged.connect(on_slider); val_edit.editingFinished.connect(on_edit)
             layout.addWidget(lbl); layout.addWidget(slider); layout.addWidget(val_edit)
             action.setDefaultWidget(widget); m.addAction(action)
@@ -458,7 +486,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
 
         # 4. Unified Divider Settings
-        add_slider_setting(menu, "Divider Width:", 0, 12, self.splitter.handleWidth(), self._set_divider_width)
+        add_slider_setting(menu, "Divider Width:", 0, 12, getattr(self, "_divider_width", self.splitter.handleWidth()), self._set_divider_width, step=0.5)
         add_slider_setting(menu, "Divider Opacity:", 0, 100, self._settings.get("window", {}).get("divider_opacity", 100), self._set_divider_opacity)
         
         menu.exec(QCursor.pos())
@@ -501,12 +529,23 @@ class MainWindow(QMainWindow):
         self._set_divider_opacity(self._settings.get("window", {}).get("divider_opacity", 100))
 
     def _set_divider_width(self, w):
-        self.splitter.setHandleWidth(w)
+        self._divider_width = w
+        self.splitter.setHandleWidth(int(math.ceil(w)))
+        # Re-apply opacity/style because margin depends on width
+        self._set_divider_opacity(self._settings.get("window", {}).get("divider_opacity", 100))
         
     def _set_divider_opacity(self, alpha_pct):
         win_s = self._settings.setdefault("window", {})
         win_s["divider_opacity"] = alpha_pct
         
+        w = getattr(self, "_divider_width", self.splitter.handleWidth())
+        if w <= 0:
+            self.splitter.setStyleSheet("""
+                QSplitter { background: transparent; }
+                QSplitter::handle { background: transparent; margin: 0px; }
+            """)
+            return
+            
         # 1. Parse base color from theme
         b_hex = Colors.BORDER
         if b_hex.startswith("#") and len(b_hex) == 9:
@@ -518,18 +557,22 @@ class MainWindow(QMainWindow):
         else:
             c = QColor(b_hex)
             
-        c.setAlpha(int(c.alpha() * alpha_pct / 100))
+        actual_alpha_pct = alpha_pct
+        if w > 0 and w < 1.0:
+            actual_alpha_pct = alpha_pct * w
+            
+        c.setAlpha(int(c.alpha() * actual_alpha_pct / 100))
         color_str = f"rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()})"
         
         h_c = QColor(Colors.ACCENT)
-        h_c.setAlpha(int(h_c.alpha() * alpha_pct / 100))
+        h_c.setAlpha(int(h_c.alpha() * actual_alpha_pct / 100))
         hover_str = f"rgba({h_c.red()}, {h_c.green()}, {h_c.blue()}, {h_c.alpha()})"
 
-        # 2. Apply local stylesheet to the splitter
+        m_val = 1 if w >= 3 else 0
         if self.splitter.orientation() == Qt.Vertical:
-            margin = "1px 40px" # Horizontal bar
+            margin = f"{m_val}px 40px"
         else:
-            margin = "40px 1px" # Vertical bar
+            margin = f"40px {m_val}px"
             
         bg_c = QColor(Colors.BG_DARKEST)
         bg_rgba = f"rgba({bg_c.red()}, {bg_c.green()}, {bg_c.blue()}, {bg_c.alpha()})"
@@ -554,6 +597,19 @@ class MainWindow(QMainWindow):
         is_transparent = "Transparent" in theme or "Glass" in theme
         ghost_active = self._auto_hide_ui or is_transparent
         
+        main_layout = self.centralWidget().layout()
+        if main_layout:
+            if ghost_active:
+                if self.title_bar.parentWidget() != self:
+                    main_layout.removeWidget(self.title_bar)
+                    self.title_bar.setParent(self)
+                self.title_bar.setGeometry(0, 0, self.width(), 28)
+                self.title_bar.raise_()
+            else:
+                if self.title_bar.parentWidget() != self.centralWidget():
+                    self.title_bar.setParent(self.centralWidget())
+                    main_layout.insertWidget(0, self.title_bar)
+                    
         show = not ghost_active or self.underMouse()
         self.title_bar.setVisible(show)
         self._grip.setVisible(show)
@@ -722,6 +778,9 @@ class MainWindow(QMainWindow):
             self.width() - self._grip.width() - 2,
             self.height() - self._grip.height() - 2,
         )
+        if hasattr(self, "title_bar") and self.title_bar.parentWidget() == self:
+            self.title_bar.setGeometry(0, 0, self.width(), 28)
+            
         if hasattr(self, "_loading_overlay") and self._loading_overlay and self._loading_overlay.isVisible():
             try:
                 self._loading_overlay.resize(self.size())
@@ -746,7 +805,7 @@ class MainWindow(QMainWindow):
                 "vertical_layout": self._layout_vertical,
                 "show_headers": self._show_headers,
                 "auto_hide_ui": self._auto_hide_ui,
-                "divider_width": self.splitter.handleWidth(),
+                "divider_width": getattr(self, "_divider_width", self.splitter.handleWidth()),
                 "divider_opacity": self._settings.get("window", {}).get("divider_opacity", 100)
             },
             "audio": {
