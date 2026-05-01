@@ -10,6 +10,7 @@ from app.base_module import BaseModule
 from app.modules import register_module
 from app.theme import Colors, Fonts
 from app.dsp.filters import MultiBandFilter
+from app.dsp import accel as dsp_accel
 
 
 @register_module("waveform", "Waveform")
@@ -87,14 +88,14 @@ class WaveformModule(BaseModule):
             self._rms_buf = np.zeros((self._buf_len, ch_count), dtype=np.float32)
             self._write_pos = 0
 
-        for i in range(0, n, chunk_size):
-            chunk = data[i:i + chunk_size]
-            if len(chunk) == 0: continue
-            
-            self._max_buf[self._write_pos] = np.max(chunk, axis=0)
-            self._min_buf[self._write_pos] = np.min(chunk, axis=0)
-            self._rms_buf[self._write_pos] = np.sqrt(np.mean(chunk**2, axis=0))
-            
+        # Use accelerated chunk reduction
+        max_chunks, min_chunks, rms_chunks = dsp_accel.waveform_reduce(data, chunk_size)
+        n_chunks = len(max_chunks)
+        
+        for i in range(n_chunks):
+            self._max_buf[self._write_pos] = max_chunks[i]
+            self._min_buf[self._write_pos] = min_chunks[i]
+            self._rms_buf[self._write_pos] = rms_chunks[i]
             self._write_pos = (self._write_pos + 1) % self._buf_len
 
     def _render(self, painter, w, h):

@@ -27,8 +27,8 @@ class SpectrumModule(BaseModule):
         self._show_note = True
         self._show_floating_note = False
         # Accumulation buffer — always holds enough samples for the largest FFT
-        self._acc_buf = np.zeros(16384, dtype=np.float32)
-        self._smoothed = np.full(8193, -120.0, dtype=np.float64)
+        self._acc_buf = np.zeros(max(16384, self._fft_size * 2), dtype=np.float32)
+        self._smoothed = np.full(self._fft_size // 2 + 1, -120.0, dtype=np.float64)
         self._peak_freq = 0.0
         self._peak_db = -120.0
         self._smooth_peak_freq = 0.0
@@ -131,6 +131,14 @@ class SpectrumModule(BaseModule):
         self._fft_size = size
         n = size // 2 + 1
         self._smoothed = np.full(n, -120.0, dtype=np.float64)
+        # Ensure accumulation buffer is always large enough for the FFT
+        min_buf = max(16384, size * 2)
+        if len(self._acc_buf) < min_buf:
+            old = self._acc_buf
+            self._acc_buf = np.zeros(min_buf, dtype=np.float32)
+            # Preserve existing data
+            copy_n = min(len(old), min_buf)
+            self._acc_buf[-copy_n:] = old[-copy_n:]
 
     def on_audio_data(self, data: np.ndarray):
         l = data[:, 0]
@@ -155,8 +163,21 @@ class SpectrumModule(BaseModule):
             # FFT on the last fft_size samples from the accumulation buffer, 
             # sliding backwards for sub-steps
             offset = (n_steps - 1 - s) * step_size
-            segment = self._acc_buf[len(self._acc_buf) - self._fft_size - offset : len(self._acc_buf) - offset]
-            if len(segment) < self._fft_size: continue
+            start_idx = len(self._acc_buf) - self._fft_size - offset
+            end_idx = len(self._acc_buf) - offset
+            
+            # Guard against negative indices
+            if start_idx < 0:
+                start_idx = 0
+            if end_idx <= start_idx:
+                continue
+                
+            segment = self._acc_buf[start_idx:end_idx]
+            if len(segment) < self._fft_size:
+                # Pad with zeros if not enough data yet (startup)
+                padded = np.zeros(self._fft_size, dtype=np.float32)
+                padded[-len(segment):] = segment
+                segment = padded
             
             mag = compute_fft(segment, self._fft_size)
 
@@ -223,22 +244,22 @@ class SpectrumModule(BaseModule):
             bar_vals = np.zeros(n_bars)
             for b in range(n_bars):
                 xs, xe = b / n_bars * w, (b + 1) / n_bars * w
-                mask = (px_x >= xs) & (px_x < xe)
-                if np.any(mask):
-                    bar_vals[b] = np.mean(mag[:nb][mask])
+                bar_mask = (px_x >= xs) & (px_x < xe)
+                if np.any(bar_mask):
+                    bar_vals[b] = np.mean(mag_filtered[bar_mask])
                 else:
                     # Interpolate from nearest bin if no bin falls exactly in this bar
                     idx = np.searchsorted(px_x, xs)
                     if idx > 0 and idx < nb:
                         # Linear interpolation between nearest bins
                         x0, x1 = px_x[idx-1], px_x[idx]
-                        v0, v1 = mag[idx-1], mag[idx]
+                        v0, v1 = mag_filtered[idx-1], mag_filtered[idx]
                         t = (xs - x0) / (x1 - x0) if x1 > x0 else 0
                         bar_vals[b] = v0 + t * (v1 - v0)
                     elif idx == 0:
-                        bar_vals[b] = mag[0]
+                        bar_vals[b] = mag_filtered[0]
                     else:
-                        bar_vals[b] = mag[nb-1]
+                        bar_vals[b] = mag_filtered[nb-1]
 
             for b in range(n_bars):
                 xs = b / n_bars * w
@@ -258,11 +279,35 @@ class SpectrumModule(BaseModule):
                 frac = max(0, min(1, (mag_filtered[i] - db_min) / (db_max - db_min)))
                 points.append(QPointF(px_x[i], dh * (1.0 - frac)))
             
-            if points:
+            if len(points) >= 2:
                 path = QPainterPath()
                 path.moveTo(points[0])
-                for p in points[1:]:
-                    path.lineTo(p)
+                
+                # Catmull-Rom spline for smooth curves between points
+                if len(points) >= 4:
+                    # First segment: straight
+                    path.lineTo(points[1])
+                    
+                    for i in range(1, len(points) - 2):
+                        p0 = points[i - 1]
+                        p1 = points[i]
+                        p2 = points[i + 1]
+                        p3 = points[i + 2]
+                        
+                        # Catmull-Rom to cubic Bezier control points
+                        cp1x = p1.x() + (p2.x() - p0.x()) / 6.0
+                        cp1y = p1.y() + (p2.y() - p0.y()) / 6.0
+                        cp2x = p2.x() - (p3.x() - p1.x()) / 6.0
+                        cp2y = p2.y() - (p3.y() - p1.y()) / 6.0
+                        
+                        path.cubicTo(cp1x, cp1y, cp2x, cp2y, p2.x(), p2.y())
+                    
+                    # Last segment: straight to final point
+                    path.lineTo(points[-1])
+                else:
+                    # Too few points for spline, use lines
+                    for p in points[1:]:
+                        path.lineTo(p)
                 
                 gc = QColor(Colors.ACCENT); gc.setAlpha(30)
                 painter.setPen(QPen(gc, 3.0)); painter.drawPath(path)

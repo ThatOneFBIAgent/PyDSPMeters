@@ -46,11 +46,20 @@ class StereometerModule(BaseModule):
             "halved_view": self._halved_view
         }
 
+    _VALID_DISPLAY_MODES = {"Vectorscope", "Lissajous"}
+    _VALID_COLOR_MODES = {"Static", "RGB", "Multi-Band"}
+    _VALID_CORR_MODES = {"Single-Band", "Multi-Band"}
+    _VALID_GUIDE_MODES = {"None", "Rhombus", "Circle"}
+
     def apply_settings(self, settings):
-        self._display_mode = settings.get("display_mode", self._display_mode)
-        self._color_mode = settings.get("color_mode", self._color_mode)
-        self._corr_mode = settings.get("corr_mode", self._corr_mode)
-        self._guide_mode = settings.get("guide_mode", self._guide_mode)
+        dm = settings.get("display_mode", self._display_mode)
+        self._display_mode = dm if dm in self._VALID_DISPLAY_MODES else "Vectorscope"
+        cm = settings.get("color_mode", self._color_mode)
+        self._color_mode = cm if cm in self._VALID_COLOR_MODES else "Static"
+        crm = settings.get("corr_mode", self._corr_mode)
+        self._corr_mode = crm if crm in self._VALID_CORR_MODES else "Single-Band"
+        gm = settings.get("guide_mode", self._guide_mode)
+        self._guide_mode = gm if gm in self._VALID_GUIDE_MODES else "Rhombus"
         self._zoom = settings.get("zoom", self._zoom)
         self._show_labels = settings.get("show_labels", self._show_labels)
         self._minimal_mode = settings.get("minimal_mode", self._minimal_mode)

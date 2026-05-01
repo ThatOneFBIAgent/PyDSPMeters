@@ -5,6 +5,7 @@ Implements K-weighting filters and gated loudness calculation.
 
 import numpy as np
 from scipy.signal import sosfilt, butter
+from app.dsp import accel as dsp_accel
 
 
 def design_k_weighting(sample_rate: float) -> np.ndarray:
@@ -90,13 +91,11 @@ class LoudnessMeter:
                 self._sos, data[:, c].astype(np.float64), zi=self._zi[c]
             )
 
-        # Write to circular buffers
-        for i in range(n):
-            pos = self._buf_pos % self._shortterm_samples
-            self._buffer[pos, :ch] = filtered[i, :ch]
-            self._raw_buffer[pos, :ch] = data[i, :ch]
-            self._buf_pos += 1
-
+        # Write to circular buffers (accelerated bulk write)
+        self._buf_pos = dsp_accel.circular_buffer_write(
+            self._buffer, self._raw_buffer, filtered, 
+            data[:, :ch].astype(np.float64), self._buf_pos
+        )
         self._buf_filled = min(self._buf_filled + n, self._shortterm_samples)
 
     def _get_last_n(self, buf: np.ndarray, n_samples: int) -> np.ndarray:

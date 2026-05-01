@@ -24,7 +24,8 @@ PyDSPMeters is a modular, ultra-responsive audio monitoring suite designed to ri
 Built from the ground up to handle high-resolution displays and high-density audio streams, PyDSPMeters utilizes a optimized processing pipeline:
 
 *   **Zero-Copy DSP**: Leveraging NumPy's vectorized operations for lightning-fast FFT calculations and signal analysis.
-*   **Circular Buffer Rendering**: Advanced `QImage` caching for modules like the Spectrogram ensures 60+ FPS even at 4K/8K resolutions.
+*   **Rust PyO3 Native Acceleration**: Performance critical hot-paths (bulk array modifications, circular buffers, column interpolations) are processed via a zero-copy compiled Rust module (`dsp_accel`), allowing the app to hit locked 60 FPS while keeping CPU usage low.
+*   **Circular Buffer Rendering**: Advanced `QImage` caching for modules like the Spectrogram ensures smooth scrolling even at 4K/8K resolutions.
 *   **Low-Latency Hooking**: Direct interface with system audio drivers via PyAudio with minimal buffer overhead.
 *   **Adaptive UI**: Dynamic text scaling and intelligent layout distribution that keeps meters readable from 60px to full-screen.
 
@@ -91,6 +92,31 @@ Additionally you can run `python build_dist.py` to compile a standalone executab
 ```bash
 pythonw "path/to/main.pyw"
 ```
+
+---
+
+## 🏎️ Rust Native Acceleration (dsp_accel)
+
+PyDSPMeters includes a custom-built Rust crate (`dsp_accel`) using `PyO3` and `maturin` that drastically accelerates DSP processing and display buffering. 
+The application includes a graceful fallback system—if the Rust module is not compiled or fails to load, it will seamlessly fall back to pure Python/NumPy logic (meaning the app will always run, just slightly slower).
+
+### Building the Native Module
+If you are developing or running from source and want maximum performance, you must compile the Rust crate. You will need:
+1. [Rust Toolchain](https://rustup.rs/) (cargo/rustc)
+2. Python development headers
+3. `maturin` installed (`pip install maturin`)
+
+**Build Command:**
+```bash
+cd native
+maturin build --release
+pip install target/wheels/dsp_accel-*.whl --force-reinstall
+```
+
+### Common Troubleshooting
+*   **Missing Visual C++ Build Tools (Windows)**: If `maturin` fails on Windows, ensure you have the "Desktop development with C++" workload installed via Visual Studio Installer.
+*   **Environment Not Found**: If `maturin` complains about missing `VIRTUAL_ENV`, it means you aren't running inside an active Python virtual environment. You can either activate your venv or build the wheel with `maturin build --release` and install it manually via pip as shown above.
+*   **Verifying it works**: The app will automatically route processing through Rust if the module is installed. You can verify it's working if CPU usage drops significantly and visual stutters in the Spectrogram and Waveform modules disappear.
 
 ---
 

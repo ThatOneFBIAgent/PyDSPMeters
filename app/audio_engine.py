@@ -6,6 +6,7 @@ Uses sounddevice for low-latency capture with a thread-safe queue bridge to Qt.
 import queue
 import numpy as np
 import sounddevice as sd
+from app.dsp import accel as dsp_accel
 from PySide6.QtCore import QObject, Signal, QTimer, Slot
 
 
@@ -180,34 +181,27 @@ class AudioEngine(QObject):
         if not blocks:
             return
 
-        # Apply gain multiplier correctly by modifying the blocks
-        for i in range(len(blocks)):
-            if self._gain_multiplier != 1.0:
-                blocks[i] = blocks[i] * self._gain_multiplier
+        # Accelerated gain application and block concatenation
+        combined = dsp_accel.apply_gain_and_concat(blocks, self._gain_multiplier)
+        n = len(combined)
+        buf_len = len(self.buffer)
 
-        for data in blocks:
-            n = len(data)
-            buf_len = len(self.buffer)
-
-            # Update circular history buffer
-            if n >= buf_len:
-                self.buffer[:] = data[-buf_len:]
-                self._write_pos = 0
+        # Update circular history buffer
+        if n >= buf_len:
+            self.buffer[:] = combined[-buf_len:]
+            self._write_pos = 0
+        else:
+            end_pos = self._write_pos + n
+            if end_pos <= buf_len:
+                self.buffer[self._write_pos:end_pos] = combined
             else:
-                end_pos = self._write_pos + n
-                if end_pos <= buf_len:
-                    self.buffer[self._write_pos:end_pos] = data
-                else:
-                    rem = end_pos - buf_len
-                    first_part = n - rem
-                    self.buffer[self._write_pos:] = data[:first_part]
-                    self.buffer[:rem] = data[first_part:]
-                self._write_pos = (self._write_pos + n) % buf_len
+                rem = end_pos - buf_len
+                first_part = n - rem
+                self.buffer[self._write_pos:] = combined[:first_part]
+                self.buffer[:rem] = combined[first_part:]
+            self._write_pos = (self._write_pos + n) % buf_len
 
-            self._total_written += n
-
-        # Concatenate all blocks to prevent event storm when unfocused
-        combined = np.concatenate(blocks)
+        self._total_written += n
         self.data_ready.emit(combined)
 
     # ── Buffer Access ───────────────────────────────────────────────────────

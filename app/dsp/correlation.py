@@ -4,6 +4,7 @@ Provides single-band and multi-band correlation metering.
 """
 
 import numpy as np
+from app.dsp import accel as dsp_accel
 
 
 def correlation(left: np.ndarray, right: np.ndarray) -> float:
@@ -13,12 +14,7 @@ def correlation(left: np.ndarray, right: np.ndarray) -> float:
     Returns:
         Value in [-1, +1]. +1 = mono, 0 = unrelated, -1 = out of phase.
     """
-    l_energy = np.sum(left ** 2)
-    r_energy = np.sum(right ** 2)
-    denom = np.sqrt(l_energy * r_energy)
-    if denom < 1e-20:
-        return 0.0
-    return float(np.sum(left * right) / denom)
+    return dsp_accel.correlation(left, right)
 
 
 def multiband_correlation(left: np.ndarray, right: np.ndarray,

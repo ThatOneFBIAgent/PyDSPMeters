@@ -259,6 +259,153 @@ THEME_PRESETS = {
             (0.55, "#00ffcccc"), (1.00, "#aaffeeff")
         ]
     },
+    "Verdant": {  # Spotify
+        "BG_DARKEST": "#060e06", "BG_DARK": "#0a140a", "BG_MODULE": "#111b11",
+        "BG_HEADER": "#162116", "BG_SETTINGS": "#1a281a", "BG_INPUT": "#090e09",
+        "BORDER": "#1a3a1a", "BORDER_ACCENT": "#1ed760",
+        "ACCENT": "#1ed760", "ACCENT_DIM": "#158a3e",
+        "ACCENT_PURPLE": "#1db954", "ACCENT_PINK": "#1fdf64",
+        "TEXT": "#ffffff", "TEXT_DIM": "#a0a0a0", "TEXT_BRIGHT": "#ffffff",
+        "BAND_LOW": "#1db954", "BAND_MID": "#1ed760", "BAND_HIGH": "#1fdf64",
+        "METER_LOW": "#1db954", "METER_MID": "#1ed760", "METER_HIGH": "#ffff00",
+        "PEAK_LED": "#ff8800", "CLIP_LED": "#ff2200",
+        "HEATMAP_STOPS": [
+            (0.00, "#060e06"), (0.30, "#0a2a14"), (0.60, "#0f6630"),
+            (0.85, "#1ed760"), (1.00, "#aaffcc")
+        ]
+    },
+    "Tangerine": {
+        "BG_DARKEST": "#0f0a00", "BG_DARK": "#1a1000", "BG_MODULE": "#221600",
+        "BG_HEADER": "#2a1c00", "BG_SETTINGS": "#332200", "BG_INPUT": "#160e00",
+        "BORDER": "#3d2600", "BORDER_ACCENT": "#ff8c00",
+        "ACCENT": "#ff8c00", "ACCENT_DIM": "#cc6600",
+        "ACCENT_PURPLE": "#ff6600", "ACCENT_PINK": "#ffaa33",
+        "TEXT": "#fff0d0", "TEXT_DIM": "#997744", "TEXT_BRIGHT": "#ffffff",
+        "BAND_LOW": "#ff6600", "BAND_MID": "#ff8c00", "BAND_HIGH": "#ffaa33",
+        "METER_LOW": "#cc6600", "METER_MID": "#ff8c00", "METER_HIGH": "#ffdd00",
+        "PEAK_LED": "#ffffff", "CLIP_LED": "#ff2200",
+        "HEATMAP_STOPS": [
+            (0.00, "#0f0a00"), (0.30, "#3a1a00"), (0.60, "#aa4400"),
+            (0.85, "#ff8c00"), (1.00, "#ffeeaa")
+        ]
+    },
+    "Obsidian Wave": {
+        "BG_DARKEST": "#000000", "BG_DARK": "#080808", "BG_MODULE": "#101010",
+        "BG_HEADER": "#181818", "BG_SETTINGS": "#202020", "BG_INPUT": "#080808",
+        "BORDER": "#2a2a2a", "BORDER_ACCENT": "#ffffff",
+        "ACCENT": "#ffffff", "ACCENT_DIM": "#aaaaaa",
+        "ACCENT_PURPLE": "#cccccc", "ACCENT_PINK": "#e0e0e0",
+        "TEXT": "#ffffff", "TEXT_DIM": "#888888", "TEXT_BRIGHT": "#ffffff",
+        "BAND_LOW": "#aaaaaa", "BAND_MID": "#cccccc", "BAND_HIGH": "#ffffff",
+        "METER_LOW": "#888888", "METER_MID": "#cccccc", "METER_HIGH": "#ffffff",
+        "PEAK_LED": "#dddddd", "CLIP_LED": "#ffffff",
+        "HEATMAP_STOPS": [
+            (0.00, "#000000"), (0.30, "#1a1a1a"), (0.60, "#555555"),
+            (0.85, "#bbbbbb"), (1.00, "#ffffff")
+        ]
+    },
+    "Ivory": {
+        "BG_DARKEST": "#0a0a0a", "BG_DARK": "#141414", "BG_MODULE": "#1c1c1c",
+        "BG_HEADER": "#242424", "BG_SETTINGS": "#2a2a2a", "BG_INPUT": "#111111",
+        "BORDER": "#383838", "BORDER_ACCENT": "#fc3c44",
+        "ACCENT": "#fc3c44", "ACCENT_DIM": "#c0222a",
+        "ACCENT_PURPLE": "#dd2233", "ACCENT_PINK": "#ff6066",
+        "TEXT": "#f5f5f7", "TEXT_DIM": "#888888", "TEXT_BRIGHT": "#ffffff",
+        "BAND_LOW": "#dd2233", "BAND_MID": "#fc3c44", "BAND_HIGH": "#ff6066",
+        "METER_LOW": "#c0222a", "METER_MID": "#fc3c44", "METER_HIGH": "#ff6066",
+        "PEAK_LED": "#ff8800", "CLIP_LED": "#ff2244",
+        "HEATMAP_STOPS": [
+            (0.00, "#0a0a0a"), (0.30, "#2a0a0c"), (0.60, "#880010"),
+            (0.85, "#fc3c44"), (1.00, "#ffaaaa")
+        ]
+    },
+    "Blueprint": {
+        "BG_DARKEST": "#0f0f0f", "BG_DARK": "#1a1a1a", "BG_MODULE": "#222222",
+        "BG_HEADER": "#2a2a2a", "BG_SETTINGS": "#313131", "BG_INPUT": "#161616",
+        "BORDER": "#3a3a3a", "BORDER_ACCENT": "#4a90d9",
+        "ACCENT": "#4a90d9", "ACCENT_DIM": "#2a6099",
+        "ACCENT_PURPLE": "#3a7acc", "ACCENT_PINK": "#66aaee",
+        "TEXT": "#e0e0e0", "TEXT_DIM": "#777777", "TEXT_BRIGHT": "#ffffff",
+        "BAND_LOW": "#3a7acc", "BAND_MID": "#4a90d9", "BAND_HIGH": "#66aaee",
+        "METER_LOW": "#2a6099", "METER_MID": "#4a90d9", "METER_HIGH": "#aaddff",
+        "PEAK_LED": "#ffcc00", "CLIP_LED": "#ff2244",
+        "HEATMAP_STOPS": [
+            (0.00, "#0f0f0f"), (0.30, "#0a1a2a"), (0.60, "#0a4488"),
+            (0.85, "#4a90d9"), (1.00, "#aaddff")
+        ]
+    },
+    "Ultraviolet": {
+        "BG_DARKEST": "#080808", "BG_DARK": "#111111", "BG_MODULE": "#181818",
+        "BG_HEADER": "#202020", "BG_SETTINGS": "#262626", "BG_INPUT": "#0e0e0e",
+        "BORDER": "#2e2e2e", "BORDER_ACCENT": "#ff5500",
+        "ACCENT": "#ff5500", "ACCENT_DIM": "#cc3300",
+        "ACCENT_PURPLE": "#ff4400", "ACCENT_PINK": "#ff7733",
+        "TEXT": "#f0f0f0", "TEXT_DIM": "#888888", "TEXT_BRIGHT": "#ffffff",
+        "BAND_LOW": "#ff4400", "BAND_MID": "#ff5500", "BAND_HIGH": "#ff7733",
+        "METER_LOW": "#cc3300", "METER_MID": "#ff5500", "METER_HIGH": "#ffaa00",
+        "PEAK_LED": "#ffdd00", "CLIP_LED": "#ff2200",
+        "HEATMAP_STOPS": [
+            (0.00, "#080808"), (0.30, "#2a0e00"), (0.60, "#aa2200"),
+            (0.85, "#ff5500"), (1.00, "#ffcc88")
+        ]
+    },
+    "Cobalt": {
+        "BG_DARKEST": "#05080f", "BG_DARK": "#0a1020", "BG_MODULE": "#10182e",
+        "BG_HEADER": "#162038", "BG_SETTINGS": "#1c2844", "BG_INPUT": "#080e1a",
+        "BORDER": "#1e2e4a", "BORDER_ACCENT": "#2c6be0",
+        "ACCENT": "#2c6be0", "ACCENT_DIM": "#1a44aa",
+        "ACCENT_PURPLE": "#2255cc", "ACCENT_PINK": "#4488ff",
+        "TEXT": "#c8d8f8", "TEXT_DIM": "#5570a0", "TEXT_BRIGHT": "#ffffff",
+        "BAND_LOW": "#2255cc", "BAND_MID": "#2c6be0", "BAND_HIGH": "#4488ff",
+        "METER_LOW": "#1a44aa", "METER_MID": "#2c6be0", "METER_HIGH": "#88bbff",
+        "PEAK_LED": "#ffcc00", "CLIP_LED": "#ff2244",
+        "HEATMAP_STOPS": [
+            (0.00, "#05080f"), (0.30, "#081030"), (0.60, "#0a3088"),
+            (0.85, "#2c6be0"), (1.00, "#aaccff")
+        ]
+    },
+    "Highlighter": {
+        "BG_DARKEST": "#f5f5e0", "BG_DARK": "#fafaf0", "BG_MODULE": "#fffff5",
+        "BG_HEADER": "#eeeecc", "BG_SETTINGS": "#fafae8", "BG_INPUT": "#f8f8e8",
+        "BORDER": "#cccc44", "BORDER_ACCENT": "#aacc00",
+        "ACCENT": "#88cc00", "ACCENT_DIM": "#558800",
+        "ACCENT_PURPLE": "#aacc00", "ACCENT_PINK": "#ccdd00",
+        "TEXT": "#222200", "TEXT_DIM": "#667722", "TEXT_BRIGHT": "#000000",
+        "BAND_LOW": "#88cc00", "BAND_MID": "#aacc00", "BAND_HIGH": "#ccdd00",
+        "METER_LOW": "#88cc00", "METER_MID": "#aacc00", "METER_HIGH": "#dd4400",
+        "PEAK_LED": "#ff6600", "CLIP_LED": "#ff0000",
+        "HEATMAP_STOPS": [
+            (0.00, "#fffff5"), (0.30, "#eeffaa"), (0.60, "#ccee44"),
+            (0.85, "#88cc00"), (1.00, "#446600")
+        ]
+    },
+    "Bubblegum": {
+        "BG_DARKEST": "#f5e8f0", "BG_DARK": "#fdf0f8", "BG_MODULE": "#fff5fc",
+        "BG_HEADER": "#f0daea", "BG_SETTINGS": "#fdf0f8", "BG_INPUT": "#fae8f5",
+        "BORDER": "#ddaacc", "BORDER_ACCENT": "#ff44aa",
+        "ACCENT": "#ff44aa", "ACCENT_DIM": "#cc1177",
+        "ACCENT_PURPLE": "#ee22aa", "ACCENT_PINK": "#ff77cc",
+        "TEXT": "#220011", "TEXT_DIM": "#994477", "TEXT_BRIGHT": "#000000",
+        "BAND_LOW": "#ee22aa", "BAND_MID": "#ff44aa", "BAND_HIGH": "#ff77cc",
+        "METER_LOW": "#cc1177", "METER_MID": "#ff44aa", "METER_HIGH": "#ff77cc",
+        "PEAK_LED": "#ff8800", "CLIP_LED": "#ff2244",
+        "HEATMAP_STOPS": [
+            (0.00, "#fff5fc"), (0.30, "#ffccee"), (0.60, "#ff88cc"),
+            (0.85, "#ff44aa"), (1.00, "#880044")
+        ]
+    }
+}
+
+# ── Theme Groups (for menu organization) ────────────────────────────────────
+
+THEME_GROUPS = {
+    "Dark": ["Midnight", "Abyss", "Slate", "Obsidian Wave", "Ivory", "Blueprint"],
+    "Vibrant": ["Neon", "Ember", "Amethyst", "Crimson", "Solar",
+                "Aurora", "Absinthe", "Rose Quartz", "Verdant", "Tangerine", "Ultraviolet"],
+    "Cool": ["Arctic", "Cobalt"],
+    "Light": ["Modern Light", "Highlighter", "Bubblegum"],
+    "Transparent": ["Transparent Ghost", "Glass",
+                    "Transparent Crimson", "Transparent Aurora"],
 }
 
 
@@ -496,35 +643,35 @@ def build_stylesheet() -> str:
         background: transparent;
     }}
     QComboBox QAbstractItemView {{
-        background: #1a1a2e;
-        border: 1px solid #3a3a6a;
-        selection-background-color: #0088aa;
-        color: #d8d8f0;
+        background: {Colors.BG_SETTINGS};
+        border: 1px solid {Colors.BORDER_ACCENT};
+        selection-background-color: {Colors.ACCENT_DIM};
+        color: {Colors.TEXT};
     }}
     QMenu {{
-        background: #1a1a2e;
-        border: 1px solid #3a3a6a;
+        background: {Colors.BG_SETTINGS};
+        border: 1px solid {Colors.BORDER_ACCENT};
         padding: 4px;
-        color: #d8d8f0;
+        color: {Colors.TEXT};
     }}
     QMenu::item {{
         padding: 5px 20px;
         border-radius: 3px;
-        color: #d8d8f0;
+        color: {Colors.TEXT};
     }}
     QMenu::item:selected {{
-        background: #0088aa;
-        color: #ffffff;
+        background: {Colors.ACCENT_DIM};
+        color: {Colors.TEXT_BRIGHT};
     }}
     QMenu::separator {{
         height: 1px;
-        background: #252545;
+        background: {Colors.BORDER};
         margin: 4px 8px;
     }}
     QToolTip {{
-        background: #1a1a2e;
-        border: 1px solid #3a3a6a;
-        color: #d8d8f0;
+        background: {Colors.BG_SETTINGS};
+        border: 1px solid {Colors.BORDER_ACCENT};
+        color: {Colors.TEXT};
         padding: 4px;
     }}
     """

@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, QPoint, QRect, QSize, Signal, QTimer
 from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QActionGroup
 
 from app.theme import (
-    Colors, Fonts, build_stylesheet, THEME_PRESETS,
+    Colors, Fonts, build_stylesheet, THEME_PRESETS, THEME_GROUPS,
     apply_theme, current_theme_name,
 )
 from app.audio_engine import AudioEngine
@@ -440,11 +440,15 @@ class MainWindow(QMainWindow):
         # 3. Appearance & UI
         theme_menu = menu.addMenu("🎨  Theme Presets")
         current = current_theme_name()
-        for name in THEME_PRESETS:
-            act = QAction(name, self)
-            act.setCheckable(True); act.setChecked(name == current)
-            act.triggered.connect(lambda checked, n=name: self._apply_theme(n))
-            theme_menu.addAction(act)
+        for group_name, theme_names in THEME_GROUPS.items():
+            group_sub = theme_menu.addMenu(group_name)
+            for name in theme_names:
+                if name not in THEME_PRESETS:
+                    continue
+                act = QAction(name, self)
+                act.setCheckable(True); act.setChecked(name == current)
+                act.triggered.connect(lambda checked, n=name: self._apply_theme(n))
+                group_sub.addAction(act)
 
         menu.addAction("Show Module Headers", self._toggle_headers).setCheckable(True)
         menu.actions()[-1].setChecked(self._show_headers)

@@ -4,7 +4,7 @@ Classic VU Meter Module: Analog-style needle meter with ballistics.
 
 import math
 import numpy as np
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QLinearGradient
 from PySide6.QtCore import Qt, QPointF, QRectF
 
 from app.base_module import BaseModule
@@ -33,6 +33,10 @@ class VUMeterModule(BaseModule):
         self._show_clip = True
         self._rise_coeff = 0.30
         self._fall_coeff = 0.08
+        # Peak hold for LED Bar style
+        self._peak_hold_l = -40.0
+        self._peak_hold_r = -40.0
+        self._peak_hold_decay = 0.02
         self.module_key = "vu_meter"
         super().__init__(audio_engine, title="VU Meter", parent=parent)
         self.canvas.set_render_func(self._render)
@@ -58,7 +62,7 @@ class VUMeterModule(BaseModule):
         
         sm = menu.addMenu("Style")
         sg = QActionGroup(self)
-        for i, s in enumerate(["Modern", "Classic Dark"]):
+        for i, s in enumerate(["Modern", "Classic Dark", "LED Bar"]):
             a = sm.addAction(s)
             a.setCheckable(True)
             a.setChecked(i == self._style)
@@ -110,6 +114,16 @@ class VUMeterModule(BaseModule):
             self._needle_l += (self._target_l - self._needle_l) * (self._rise_coeff if self._target_l > self._needle_l else self._fall_coeff)
             self._needle_r += (self._target_r - self._needle_r) * (self._rise_coeff if self._target_r > self._needle_r else self._fall_coeff)
             
+            # Peak hold (for LED Bar style)
+            if self._needle_l > self._peak_hold_l:
+                self._peak_hold_l = self._needle_l
+            else:
+                self._peak_hold_l -= self._peak_hold_decay
+            if self._needle_r > self._peak_hold_r:
+                self._peak_hold_r = self._needle_r
+            else:
+                self._peak_hold_r -= self._peak_hold_decay
+            
             # Peak/Clip
             peak_l = 20.0 * np.log10(max(np.max(np.abs(l)), 1e-10)) + self._cal_offset
             peak_r = 20.0 * np.log10(max(np.max(np.abs(r)), 1e-10)) + self._cal_offset
@@ -126,11 +140,22 @@ class VUMeterModule(BaseModule):
             self._needle_l += (target - self._needle_l) * (self._rise_coeff if target > self._needle_l else self._fall_coeff)
             self._needle_r = self._needle_l
             
+            # Peak hold
+            if self._needle_l > self._peak_hold_l:
+                self._peak_hold_l = self._needle_l
+            else:
+                self._peak_hold_l -= self._peak_hold_decay
+            self._peak_hold_r = self._peak_hold_l
+            
             peak = 20.0 * np.log10(max(np.max(np.abs(sig)), 1e-10)) + self._cal_offset
             self._peak_lit_l = self._peak_lit_r = peak > self._peak_threshold
             self._clip_lit_l = self._clip_lit_r = peak > self._clip_threshold
 
     def _render(self, painter, w, h):
+        if self._style == 2:
+            self._render_led_bar(painter, w, h)
+            return
+            
         style = self._style
         is_dark = (style == 1)
         is_stereo = (self._channel == "L+R")
@@ -289,3 +314,146 @@ class VUMeterModule(BaseModule):
                 painter.setPen(QColor(Colors.TEXT_DIM))
                 painter.setFont(self.get_responsive_font(Fonts.small, 40, 12, "CLIP"))
                 painter.drawText(QRectF(w - 58, 6, 40, 12), Qt.AlignRight, "CLIP")
+
+    def _render_led_bar(self, painter, w, h):
+        """LED Bar style: Segmented horizontal/vertical bar meter with peak hold."""
+        is_stereo = (self._channel == "L+R")
+        
+        pad = 6
+        bar_area_x = pad
+        bar_area_w = w - pad * 2
+        
+        # dB range: -40 to +3
+        db_min, db_max = -40.0, 3.0
+        db_range = db_max - db_min
+        
+        # VU scale marks
+        vu_ticks = [-40, -30, -20, -10, -7, -5, -3, 0, 3]
+        
+        # Segment count adapts to width
+        n_segments = max(12, min(60, int(bar_area_w / 4)))
+        seg_gap = max(1, int(bar_area_w / n_segments * 0.15))
+        seg_w = (bar_area_w - (n_segments - 1) * seg_gap) / n_segments
+        if seg_w < 2:
+            seg_w = 2
+            seg_gap = 1
+        
+        if is_stereo:
+            # Two bars stacked
+            bar_h = max(6, (h - pad * 3 - 16) / 2)  # 16px for scale
+            bar_y_l = pad
+            bar_y_r = pad + bar_h + pad
+            scale_y = bar_y_r + bar_h + 2
+            
+            self._draw_led_bar_single(painter, bar_area_x, bar_y_l, bar_area_w, bar_h,
+                                       self._needle_l, self._peak_hold_l, n_segments, seg_w, seg_gap,
+                                       db_min, db_max)
+            self._draw_led_bar_single(painter, bar_area_x, bar_y_r, bar_area_w, bar_h,
+                                       self._needle_r, self._peak_hold_r, n_segments, seg_w, seg_gap,
+                                       db_min, db_max)
+            
+            # Channel labels
+            painter.setFont(self.get_responsive_font(Fonts.small, 14, bar_h, "L"))
+            painter.setPen(QColor(Colors.TEXT_DIM))
+            painter.drawText(QRectF(bar_area_x - 2, bar_y_l, 14, bar_h), Qt.AlignVCenter | Qt.AlignLeft, "L")
+            painter.drawText(QRectF(bar_area_x - 2, bar_y_r, 14, bar_h), Qt.AlignVCenter | Qt.AlignLeft, "R")
+        else:
+            # Single centered bar
+            bar_h = max(8, (h - pad * 2 - 16) / 1)
+            bar_y = pad
+            scale_y = bar_y + bar_h + 2
+            
+            self._draw_led_bar_single(painter, bar_area_x, bar_y, bar_area_w, bar_h,
+                                       self._needle_l, self._peak_hold_l, n_segments, seg_w, seg_gap,
+                                       db_min, db_max)
+
+        # Scale labels
+        painter.setFont(Fonts.small())
+        for db in vu_ticks:
+            frac = (db - db_min) / db_range
+            tx = bar_area_x + frac * bar_area_w
+            lbl = f"{db}" if db <= 0 else f"+{db}"
+            
+            # Adaptive decluttering
+            if bar_area_w < 200 and db not in [-40, -20, 0, 3]:
+                continue
+            if bar_area_w < 350 and db in [-30, -7, -5]:
+                continue
+            
+            painter.setPen(QColor(Colors.RED) if db >= 0 else QColor(Colors.TEXT_DIM))
+            painter.setFont(self.get_responsive_font(Fonts.small, 28, 12, lbl))
+            painter.drawText(QRectF(tx - 14, scale_y, 28, 12), Qt.AlignCenter, lbl)
+        
+        # PEAK / CLIP LEDs
+        if h > 30:
+            led_y = h - 14
+            painter.setFont(Fonts.small())
+            if self._show_peak:
+                lit = self._peak_lit_l or self._peak_lit_r
+                pc = QColor(Colors.PEAK_LED) if lit else QColor(Colors.BG_INPUT)
+                painter.setBrush(QBrush(pc))
+                painter.setPen(QPen(QColor(Colors.BORDER), 1))
+                painter.drawRoundedRect(QRectF(bar_area_x, led_y, 6, 6), 1, 1)
+                if w > 85:
+                    painter.setPen(QColor(Colors.TEXT_DIM))
+                    painter.drawText(QRectF(bar_area_x + 9, led_y - 2, 30, 10), Qt.AlignLeft, "PK")
+                    
+            if self._show_clip:
+                lit = self._clip_lit_l or self._clip_lit_r
+                cc = QColor(Colors.CLIP_LED) if lit else QColor(Colors.BG_INPUT)
+                painter.setBrush(QBrush(cc))
+                painter.setPen(QPen(QColor(Colors.BORDER), 1))
+                painter.drawRoundedRect(QRectF(w - pad - 6, led_y, 6, 6), 1, 1)
+                if w > 85:
+                    painter.setPen(QColor(Colors.TEXT_DIM))
+                    painter.setFont(self.get_responsive_font(Fonts.small, 30, 10, "CLP"))
+                    painter.drawText(QRectF(w - pad - 38, led_y - 2, 30, 10), Qt.AlignRight, "CLP")
+
+    def _draw_led_bar_single(self, painter, x, y, total_w, bar_h, level, peak_hold,
+                              n_segments, seg_w, seg_gap, db_min, db_max):
+        """Draw a single LED bar with gradient segments and peak hold indicator."""
+        db_range = db_max - db_min
+        level_frac = max(0, min(1, (level - db_min) / db_range))
+        peak_frac = max(0, min(1, (peak_hold - db_min) / db_range))
+        lit_segments = int(level_frac * n_segments)
+        peak_seg = int(peak_frac * n_segments)
+        
+        # 0dB threshold segment
+        zero_seg = int(((0.0 - db_min) / db_range) * n_segments)
+        
+        for i in range(n_segments):
+            sx = x + i * (seg_w + seg_gap)
+            frac = i / n_segments
+            
+            # Determine segment color by position
+            if i >= zero_seg:
+                # Red zone (≥ 0 dB)
+                seg_color = QColor(Colors.METER_HIGH)
+            elif frac > 0.65:
+                # Yellow/warning zone
+                seg_color = QColor(Colors.METER_MID)
+            else:
+                # Green/normal zone
+                seg_color = QColor(Colors.METER_LOW)
+            
+            if i < lit_segments:
+                # Lit segment
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(seg_color))
+                painter.drawRoundedRect(QRectF(sx, y, seg_w, bar_h), 1, 1)
+                
+                # Subtle inner glow highlight at top
+                glow = QColor(255, 255, 255, 40)
+                painter.fillRect(QRectF(sx + 1, y + 1, seg_w - 2, max(1, bar_h * 0.25)), glow)
+            elif i == peak_seg and peak_hold > db_min + 2:
+                # Peak hold marker
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(seg_color))
+                painter.drawRoundedRect(QRectF(sx, y, seg_w, bar_h), 1, 1)
+            else:
+                # Unlit segment — dim outline
+                dim = QColor(seg_color)
+                dim.setAlpha(25)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(dim))
+                painter.drawRoundedRect(QRectF(sx, y, seg_w, bar_h), 1, 1)
