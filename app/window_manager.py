@@ -522,20 +522,13 @@ class MainWindow(QMainWindow):
         hover_str = f"rgba({h_c.red()}, {h_c.green()}, {h_c.blue()}, {h_c.alpha()})"
 
         # 2. Apply local stylesheet to the splitter
-        # We use different margins based on orientation to keep it clean
         if self.splitter.orientation() == Qt.Vertical:
             margin = "1px 40px" # Horizontal bar
         else:
             margin = "40px 1px" # Vertical bar
             
-        theme = current_theme_name()
-        is_transparent = "Transparent" in theme or "Glass" in theme
-        
-        if is_transparent:
-            bg_rgba = "transparent"
-        else:
-            bg_c = QColor(Colors.BG_DARKEST)
-            bg_rgba = f"rgba({bg_c.red()}, {bg_c.green()}, {bg_c.blue()}, {bg_c.alpha()})"
+        bg_c = QColor(Colors.BG_DARKEST)
+        bg_rgba = f"rgba({bg_c.red()}, {bg_c.green()}, {bg_c.blue()}, {bg_c.alpha()})"
 
         self.splitter.setStyleSheet(f"""
             QSplitter {{
