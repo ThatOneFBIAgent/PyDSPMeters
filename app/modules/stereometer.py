@@ -114,6 +114,8 @@ class StereometerModule(BaseModule):
             a.triggered.connect(lambda checked, t=c: setattr(self, "_corr_mode", t))
             crg.addAction(a)
             
+        crm.setEnabled(not self._minimal_mode)
+            
         a = menu.addAction("Minimal Mode")
         a.setCheckable(True)
         a.setChecked(self._minimal_mode)

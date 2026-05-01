@@ -33,6 +33,7 @@ class SpectrumModule(BaseModule):
         self._peak_db = -120.0
         self._smooth_peak_freq = 0.0
         self._smooth_peak_db = -120.0
+        self._peak_history = []
         self._speed = 1.0
         self.module_key = "spectrum"
         super().__init__(audio_engine, title="Spectrum", parent=parent)
@@ -125,6 +126,7 @@ class SpectrumModule(BaseModule):
         a = menu.addAction("Floating Note Peak")
         a.setCheckable(True)
         a.setChecked(self._show_floating_note)
+        a.setEnabled(self._show_note)
         a.triggered.connect(lambda checked: setattr(self, "_show_floating_note", checked))
 
     def _set_fft_size(self, size):
@@ -191,10 +193,16 @@ class SpectrumModule(BaseModule):
             
         # Smoothing for peak detection
         if self._peak_db > -90:
-            alpha = 0.2
-            self._smooth_peak_freq += (self._peak_freq - self._smooth_peak_freq) * alpha
-            self._smooth_peak_db += (self._peak_db - self._smooth_peak_db) * alpha
+            self._peak_history.append(self._peak_freq)
+            if len(self._peak_history) > 30:
+                self._peak_history.pop(0)
+                
+            target_freq = float(np.median(self._peak_history))
+            alpha = 0.05
+            self._smooth_peak_freq += (target_freq - self._smooth_peak_freq) * alpha
+            self._smooth_peak_db += (self._peak_db - self._smooth_peak_db) * 0.15
         else:
+            self._peak_history.clear()
             self._smooth_peak_db = -120.0
 
     def _render(self, painter, w, h):

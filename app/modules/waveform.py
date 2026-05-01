@@ -24,7 +24,7 @@ class WaveformModule(BaseModule):
         self._min_buf = np.zeros((self._buf_len, audio_engine.channels), dtype=np.float32)
         self._rms_buf = np.zeros((self._buf_len, audio_engine.channels), dtype=np.float32)
         self._write_pos = 0
-        self._display_mode = "Split" if audio_engine.channels >= 2 else "Overlay"
+        self._display_mode = "Dual" if audio_engine.channels >= 2 else "Overlay"
         self.module_key = "waveform"
         super().__init__(audio_engine, title="Waveform", parent=parent)
         self.canvas.set_render_func(self._render)
@@ -67,8 +67,9 @@ class WaveformModule(BaseModule):
             sg.addAction(a)
             
         dm = menu.addMenu("Display Mode")
+        dm.setEnabled(self._channel in ["All", "L+R"])
         dg = QActionGroup(self)
-        for d in ["Overlay", "Split"]:
+        for d in ["Overlay", "Split", "Dual"]:
             a = dm.addAction(d)
             a.setCheckable(True)
             a.setChecked(self._display_mode == d)
@@ -125,20 +126,20 @@ class WaveformModule(BaseModule):
             maxs = (max_all[:, 0] + max_all[:, 1]) * 0.5
             mins = (min_all[:, 0] + min_all[:, 1]) * 0.5
             rmss = (rms_all[:, 0] + rms_all[:, 1]) * 0.5
-            self._draw_wave(painter, maxs, mins, rmss, Colors.ACCENT, h / 2, h)
+            self._draw_wave(painter, maxs, mins, rmss, Colors.ACCENT, h / 2, h, "both")
             return
         elif self._channel == "Side":
             maxs = (max_all[:, 0] - max_all[:, 1]) * 0.5
             mins = (min_all[:, 0] - min_all[:, 1]) * 0.5
             rmss = np.abs(rms_all[:, 0] - rms_all[:, 1]) * 0.5
-            self._draw_wave(painter, maxs, mins, rmss, Colors.ACCENT_PURPLE, h / 2, h)
+            self._draw_wave(painter, maxs, mins, rmss, Colors.ACCENT_PURPLE, h / 2, h, "both")
             return
         else: # L+R or All
             channels = list(range(self.audio_engine.channels))
 
         colors = [Colors.ACCENT, Colors.ACCENT_PINK, Colors.ACCENT_PURPLE, Colors.BAND_LOW, Colors.BAND_MID, Colors.BAND_HIGH, Colors.METER_MID, Colors.METER_HIGH]
         
-        if self._display_mode == "Split" and len(channels) > 1:
+        if self._display_mode == "Dual" and len(channels) > 1:
             n_ch = len(channels)
             strip_h = h / n_ch
             for i, idx in enumerate(channels):
@@ -149,16 +150,25 @@ class WaveformModule(BaseModule):
                     painter.drawLine(0, int(i * strip_h), w, int(i * strip_h))
                 
                 if idx < len(max_all[0]):
-                    self._draw_wave(painter, max_all[:, idx], min_all[:, idx], rms_all[:, idx], colors[idx % len(colors)], cy, strip_h)
+                    self._draw_wave(painter, max_all[:, idx], min_all[:, idx], rms_all[:, idx], colors[idx % len(colors)], cy, strip_h, "both")
+        elif self._display_mode == "Split" and len(channels) > 1:
+            mid_y = h / 2
+            painter.setPen(QPen(QColor(Colors.GRID), 1))
+            painter.drawLine(0, int(mid_y), w, int(mid_y))
+            c0, c1 = channels[0], channels[1]
+            if c0 < len(max_all[0]):
+                self._draw_wave(painter, max_all[:, c0], min_all[:, c0], rms_all[:, c0], colors[c0 % len(colors)], mid_y, h, "top")
+            if c1 < len(max_all[0]):
+                self._draw_wave(painter, max_all[:, c1], min_all[:, c1], rms_all[:, c1], colors[c1 % len(colors)], mid_y, h, "bottom")
         else:
             mid_y = h / 2
             painter.setPen(QPen(QColor(Colors.GRID), 1))
             painter.drawLine(0, int(mid_y), w, int(mid_y))
             for idx in channels:
                 if idx < len(max_all[0]):
-                    self._draw_wave(painter, max_all[:, idx], min_all[:, idx], rms_all[:, idx], colors[idx % len(colors)], mid_y, h)
+                    self._draw_wave(painter, max_all[:, idx], min_all[:, idx], rms_all[:, idx], colors[idx % len(colors)], mid_y, h, "both")
 
-    def _draw_wave(self, painter, maxs, mins, rmss, base_color, mid_y, h):
+    def _draw_wave(self, painter, maxs, mins, rmss, base_color, mid_y, h, side="both"):
         from PySide6.QtCore import QLineF
         h_factor = h * 0.45
         
@@ -173,7 +183,17 @@ class WaveformModule(BaseModule):
             rms_val = rmss[x] * 2.0 # Standardized scale
             h_rms = rmss[x] * h_factor
             
-            line = QLineF(x, mid_y - h_rms, x, mid_y + h_rms)
+            if side == "both":
+                yt, yb = mid_y - h_rms, mid_y + h_rms
+                pt, pb = mid_y - maxs[x] * h_factor, mid_y - mins[x] * h_factor
+            elif side == "top":
+                yt, yb = mid_y - h_rms - 1.0, mid_y - 1.0
+                pt, pb = mid_y - maxs[x] * h_factor - 1.0, mid_y - 1.0
+            else: # bottom
+                yt, yb = mid_y + 1.0, mid_y + h_rms + 1.0
+                pt, pb = mid_y + 1.0, mid_y - mins[x] * h_factor + 1.0
+            
+            line = QLineF(x, yt, x, yb)
             if rms_val > 0.7: 
                 red_lines.append(line)
             elif rms_val > 0.3: 
@@ -182,7 +202,7 @@ class WaveformModule(BaseModule):
                 base_lines.append(line)
             
             # Peak outline (using base_color)
-            peak_lines.append(QLineF(x, mid_y - maxs[x] * h_factor, x, mid_y - mins[x] * h_factor))
+            peak_lines.append(QLineF(x, pt, x, pb))
 
         # 1. Draw Peaks (translucent background)
         pc = QColor(base_color)

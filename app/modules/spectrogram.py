@@ -24,6 +24,7 @@ class SpectrogramModule(BaseModule):
         self._orientation = "Horizontal"
         self._tilt = 0.0
         self._mode = "Classic"
+        self._colormap = "Theme"
         self._show_piano = False
         self._show_freq = True
         self._loop = False
@@ -44,9 +45,22 @@ class SpectrogramModule(BaseModule):
         self.canvas.set_render_func(self._render)
 
     def on_theme_changed(self):
-        self._lut = dsp_accel.build_colormap(Colors.HEATMAP_STOPS)
+        cmap = getattr(self, "_colormap", "Theme")
+        if cmap == "Black-Blue-Red":
+            stops = [
+                (0.0, (0, 0, 0)),
+                (0.5, (0, 0, 255)),
+                (1.0, (255, 0, 0))
+            ]
+            self._lut = dsp_accel.build_colormap(stops)
+        else:
+            self._lut = dsp_accel.build_colormap(Colors.HEATMAP_STOPS)
         # Recolor entire history buffer with new LUT
         self._recolor_buffer()
+
+    def _set_colormap(self, name):
+        self._colormap = name
+        self.on_theme_changed()
 
     def _recolor_buffer(self):
         """Recolor the entire buffer_data from history using current LUT."""
@@ -76,7 +90,8 @@ class SpectrogramModule(BaseModule):
             "show_piano": self._show_piano,
             "show_freq": self._show_freq,
             "speed": self._speed,
-            "db_floor": self._db_floor
+            "db_floor": self._db_floor,
+            "colormap": getattr(self, "_colormap", "Theme")
         }
 
     def apply_settings(self, settings):
@@ -89,6 +104,7 @@ class SpectrogramModule(BaseModule):
         self._show_freq = settings.get("show_freq", self._show_freq)
         self._speed = float(settings.get("speed", self._speed))
         self._db_floor = float(settings.get("db_floor", self._db_floor))
+        self._colormap = settings.get("colormap", getattr(self, "_colormap", "Theme"))
         # Re-initialize history if FFT size changed
         self._set_fft(self._fft_size)
 
@@ -130,6 +146,15 @@ class SpectrogramModule(BaseModule):
             a.setChecked(m == self._mode)
             a.triggered.connect(lambda checked, t=m: setattr(self, "_mode", t))
             mg.addAction(a)
+
+        cm = menu.addMenu("Colormap")
+        cg = QActionGroup(self)
+        for c in ["Theme", "Black-Blue-Red"]:
+            a = cm.addAction(c)
+            a.setCheckable(True)
+            a.setChecked(c == getattr(self, "_colormap", "Theme"))
+            a.triggered.connect(lambda checked, t=c: self._set_colormap(t))
+            cg.addAction(a)
 
         tm = menu.addMenu("Tilt")
         tg = QActionGroup(self)
