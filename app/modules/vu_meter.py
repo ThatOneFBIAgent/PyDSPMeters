@@ -173,7 +173,12 @@ class VUMeterModule(BaseModule):
                 painter.drawLine(QPointF(cx + inner_r * math.cos(angle), cy - inner_r * math.sin(angle)),
                                  QPointF(cx + outer_r * math.cos(angle), cy - outer_r * math.sin(angle)))
                 
-                if label and w > 130:
+                if label:
+                    # Adaptive decluttering: Hide minor labels if radius is small
+                    if radius < 60 and db not in [-20, 0, 3]: continue
+                    if radius < 90 and db not in [-20, -10, 0, 3]: continue
+                    if radius < 120 and db in [-7, -3, -1, 1, 2]: continue
+                    
                     lr = radius * 0.76
                     lx, ly = cx + lr * math.cos(angle) - 12, cy - lr * math.sin(angle) - 7
                     painter.setFont(self.get_responsive_font(Fonts.vu_scale, 24, 14, label))
@@ -203,7 +208,12 @@ class VUMeterModule(BaseModule):
                 painter.drawLine(QPointF(cx + inner_r * math.cos(angle), cy - inner_r * math.sin(angle)),
                                  QPointF(cx + outer_r * math.cos(angle), cy - outer_r * math.sin(angle)))
                 
-                if label and w > 130:
+                if label:
+                    # Adaptive decluttering: Hide minor labels if radius is small
+                    if radius < 60 and db not in [-20, 0, 3]: continue
+                    if radius < 90 and db not in [-20, -10, 0, 3]: continue
+                    if radius < 120 and db in [-7, -3, -1, 1, 2]: continue
+                    
                     lr = radius * 0.82
                     lx, ly = cx + lr * math.cos(angle) - 12, cy - lr * math.sin(angle) - 7
                     painter.setFont(self.get_responsive_font(Fonts.vu_scale, 24, 14, label))
