@@ -369,201 +369,94 @@ class MainWindow(QMainWindow):
     # ── Gear Menu (Device + Theme) ──────────────────────────────────────────
 
     def _show_gear_menu(self):
-        from PySide6.QtWidgets import QWidgetAction, QSlider, QHBoxLayout
+        from PySide6.QtWidgets import QWidgetAction, QSlider, QHBoxLayout, QLineEdit
+        from PySide6.QtGui import QIntValidator
         menu = QMenu(self)
         
-        # Force Midnight colors for settings for readability
+        # Unified Menu Styling
         menu.setStyleSheet(f"""
-            QMenu {{ background: #1a1a2e; border: 1px solid #3a3a6a; color: #d8d8f0; padding: 4px; }}
-            QMenu::item {{ padding: 5px 20px; border-radius: 3px; color: #d8d8f0; }}
-            QMenu::item:selected {{ background: #0088aa; color: #ffffff; }}
-            QMenu::separator {{ height: 1px; background: #252545; margin: 4px 8px; }}
-            QLabel {{ color: #a9b1d6; }}
-            QSlider::groove:horizontal {{ background: #10101a; height: 4px; border-radius: 2px; }}
-            QSlider::handle:horizontal {{ background: #00bbcc; width: 12px; height: 12px; margin: -4px 0; border-radius: 6px; }}
+            QMenu {{ background: #1a1a2e; border: 1px solid #3a3a6a; color: #d8d8f0; padding: 6px; }}
+            QMenu::item {{ padding: 6px 24px; border-radius: 4px; color: #d8d8f0; }}
+            QMenu::item:selected {{ background: {Colors.ACCENT_DIM}; color: #ffffff; }}
+            QMenu::separator {{ height: 1px; background: #252545; margin: 6px 8px; }}
+            QLabel {{ color: {Colors.TEXT_DIM}; font-size: 8pt; }}
+            QLineEdit {{ background: {Colors.BG_INPUT}; border: 1px solid {Colors.BORDER}; border-radius: 3px; padding: 1px; color: {Colors.TEXT}; }}
         """)
 
-        # Audio device submenu grouped by API
+        def add_slider_setting(m, label, min_v, max_v, current_v, callback, is_float=False):
+            action = QWidgetAction(self)
+            widget = QWidget()
+            layout = QHBoxLayout(widget)
+            layout.setContentsMargins(10, 2, 10, 2)
+            lbl = QLabel(label); lbl.setFixedWidth(100)
+            slider = QSlider(Qt.Horizontal); slider.setRange(min_v, max_v)
+            slider.setValue(int(current_v * 100) if is_float else current_v)
+            slider.setFixedWidth(110)
+            val_edit = QLineEdit(str(slider.value()))
+            val_edit.setFixedWidth(35); val_edit.setAlignment(Qt.AlignCenter); val_edit.setValidator(QIntValidator(min_v, max_v))
+            def on_slider(v):
+                val_edit.setText(str(v))
+                callback(v / 100.0 if is_float else v)
+            def on_edit():
+                try:
+                    v = int(val_edit.text()); v = max(min_v, min(max_v, v))
+                    slider.setValue(v); callback(v / 100.0 if is_float else v)
+                except: pass
+            slider.valueChanged.connect(on_slider); val_edit.editingFinished.connect(on_edit)
+            layout.addWidget(lbl); layout.addWidget(slider); layout.addWidget(val_edit)
+            action.setDefaultWidget(widget); m.addAction(action)
+
+        # 1. Device Management (Categorized by API)
         dev_menu = menu.addMenu("🎤  Audio Device")
-        default_action = QAction("Default Input", self)
-        default_action.setCheckable(True)
-        default_action.setChecked(self._current_device is None)
-        default_action.triggered.connect(lambda: self._select_device(None))
-        dev_menu.addAction(default_action)
-        dev_menu.addSeparator()
-
         self._refresh_devices()
-        
-        # Channel count selection
-        chan_menu = menu.addMenu("🔢  Channels")
-        for c in [1, 2, 4, 6, 8]:
-            action = QAction(f"{c} Channel{'s' if c > 1 else ''}", self)
-            action.setCheckable(True)
-            action.setChecked(self.audio_engine.channels == c)
-            action.triggered.connect(lambda checked, count=c: self._select_channels(count))
-            chan_menu.addAction(action)
-            
-        menu.addSeparator()
-
         apis = {}
         for d in self._devices:
             apis.setdefault(d["hostapi"], []).append(d)
-
-        for api, devs in apis.items():
-            api_menu = dev_menu.addMenu(api)
+        for api_name, devs in apis.items():
+            api_submenu = dev_menu.addMenu(api_name)
             for d in devs:
-                label = d["name"]
-                action = QAction(label, self)
-                action.setCheckable(True)
-                action.setChecked(self._current_device == d["index"])
-                idx = d["index"]
-                full_id = d["full_id"]
-                action.triggered.connect(lambda checked, i=idx, fid=full_id: self._select_device(i, fid))
-                api_menu.addAction(action)
+                act = QAction(d["name"], self)
+                act.setCheckable(True); act.setChecked(self._current_device == d["index"])
+                act.triggered.connect(lambda checked, i=d["index"], fid=d["full_id"]: self._select_device(i, fid))
+                api_submenu.addAction(act)
+
+        chan_menu = menu.addMenu("🔢  Channels")
+        for c in [1, 2, 4, 6, 8]:
+            act = QAction(f"{c} Channels", self)
+            act.setCheckable(True); act.setChecked(self.audio_engine.channels == c)
+            act.triggered.connect(lambda checked, count=c: self._select_channels(count))
+            chan_menu.addAction(act)
 
         menu.addSeparator()
 
-        # Overdrive (Gain) slider via QWidgetAction
-        gain_act = QWidgetAction(self)
-        gain_widget = QWidget()
-        gain_layout = QHBoxLayout(gain_widget)
-        gain_layout.setContentsMargins(10, 4, 10, 4)
-        gain_label = QLabel("Input Overdrive:")
-        gain_label.setFixedWidth(90)
-        
-        gain_slider = QSlider(Qt.Horizontal)
-        gain_slider.setRange(0, 150)
-        gain_slider.setValue(int(self.audio_engine.gain_multiplier * 100))
-        gain_slider.setFixedWidth(110)
-        
-        from PySide6.QtWidgets import QLineEdit
-        from PySide6.QtGui import QIntValidator
-        gain_input = QLineEdit(str(gain_slider.value()))
-        gain_input.setFixedWidth(40)
-        gain_input.setAlignment(Qt.AlignCenter)
-        gain_input.setValidator(QIntValidator(0, 150))
-        gain_input.setStyleSheet(f"background: {Colors.BG_INPUT}; border: 1px solid {Colors.BORDER}; padding: 1px;")
-
-        def on_gain_slider(v):
-            self.audio_engine.gain_multiplier = v / 100.0
-            gain_input.setText(str(v))
-
-        def on_gain_text():
-            try:
-                v = int(gain_input.text())
-                v = max(0, min(150, v))
-                gain_slider.setValue(v)
-                self.audio_engine.gain_multiplier = v / 100.0
-            except: pass
-
-        gain_slider.valueChanged.connect(on_gain_slider)
-        gain_input.editingFinished.connect(on_gain_text)
-        
-        gain_layout.addWidget(gain_label)
-        gain_layout.addWidget(gain_slider)
-        gain_layout.addWidget(gain_input)
-        gain_act.setDefaultWidget(gain_widget)
-        menu.addAction(gain_act)
-
-        # Text Scale Slider
-        text_act = QWidgetAction(self)
-        text_widget = QWidget()
-        text_layout = QHBoxLayout(text_widget)
-        text_layout.setContentsMargins(10, 4, 10, 4)
-        text_label = QLabel("Label Scale:")
-        text_label.setFixedWidth(90)
-        
-        text_slider = QSlider(Qt.Horizontal)
-        text_slider.setRange(50, 150) # 50% to 150%
-        text_slider.setValue(int(Fonts.TEXT_SCALE * 100))
-        text_slider.setFixedWidth(110)
-        
-        text_val = QLabel(f"{text_slider.value()}%")
-        text_val.setFixedWidth(40)
-        text_val.setAlignment(Qt.AlignCenter)
-
-        def on_text_scale(v):
-            Fonts.TEXT_SCALE = v / 100.0
-            text_val.setText(f"{v}%")
-            # Trigger a refresh of the entire UI to update font sizes
-            self.setStyleSheet(build_stylesheet())
-            for m in self._modules:
-                m.setStyleSheet(f"#baseModule {{ background: {Colors.BG_DARK}; border: 1px solid {Colors.BORDER}; border-radius: 4px; }}")
-                m.header.update() # Refresh header fonts if needed
-        
-        text_slider.valueChanged.connect(on_text_scale)
-        
-        text_layout.addWidget(text_label)
-        text_layout.addWidget(text_slider)
-        text_layout.addWidget(text_val)
-        text_act.setDefaultWidget(text_widget)
-        menu.addAction(text_act)
-
-        menu.addSeparator()
-
-        # UI Settings
-        hdr_action = QAction("Show Module Headers", self)
-        hdr_action.setCheckable(True)
-        hdr_action.setChecked(self._show_headers)
-        hdr_action.triggered.connect(self._toggle_headers)
-        menu.addAction(hdr_action)
-        
-        ghost_action = QAction("Auto-Hide Title Bar", self)
-        ghost_action.setCheckable(True)
-        ghost_action.setChecked(self._auto_hide_ui)
-        ghost_action.triggered.connect(self._toggle_ghost_mode)
-        menu.addAction(ghost_action)
+        # 2. Main Application Settings
+        add_slider_setting(menu, "Input Overdrive:", 0, 200, self.audio_engine.gain_multiplier, 
+                           lambda v: setattr(self.audio_engine, "gain_multiplier", v), is_float=True)
+        add_slider_setting(menu, "Global Label Scale:", 50, 200, Fonts.TEXT_SCALE, 
+                           self._update_text_scale, is_float=True)
         
         menu.addSeparator()
 
-        # Theme submenu
-        theme_menu = menu.addMenu("🎨  Theme")
+        # 3. Appearance & UI
+        theme_menu = menu.addMenu("🎨  Theme Presets")
         current = current_theme_name()
         for name in THEME_PRESETS:
-            action = QAction(name, self)
-            action.setCheckable(True)
-            action.setChecked(name == current)
-            action.triggered.connect(
-                lambda checked, n=name: self._apply_theme(n)
-            )
-            theme_menu.addAction(action)
+            act = QAction(name, self)
+            act.setCheckable(True); act.setChecked(name == current)
+            act.triggered.connect(lambda checked, n=name: self._apply_theme(n))
+            theme_menu.addAction(act)
 
+        menu.addAction("Show Module Headers", self._toggle_headers).setCheckable(True)
+        menu.actions()[-1].setChecked(self._show_headers)
+        menu.addAction("Auto-Hide Title Bar", self._toggle_ghost_mode).setCheckable(True)
+        menu.actions()[-1].setChecked(self._auto_hide_ui)
+        
         menu.addSeparator()
-        
-        # Divider Settings
-        div_menu = menu.addMenu("📏  Divider Settings")
-        
-        # Width
-        w_act = QWidgetAction(self)
-        w_widget = QWidget()
-        w_layout = QHBoxLayout(w_widget)
-        w_label = QLabel("Width:")
-        w_label.setFixedWidth(60)
-        w_slider = QSlider(Qt.Horizontal)
-        w_slider.setRange(0, 12)
-        w_slider.setValue(self.splitter.handleWidth())
-        w_slider.valueChanged.connect(self._set_divider_width)
-        w_layout.addWidget(w_label)
-        w_layout.addWidget(w_slider)
-        w_act.setDefaultWidget(w_widget)
-        div_menu.addAction(w_act)
-        
-        # Visibility (Opacity)
-        o_act = QWidgetAction(self)
-        o_widget = QWidget()
-        o_layout = QHBoxLayout(o_widget)
-        o_label = QLabel("Opacity:")
-        o_label.setFixedWidth(60)
-        o_slider = QSlider(Qt.Horizontal)
-        o_slider.setRange(0, 100)
-        # We'll simulate this by setting stylesheet handle color
-        o_slider.setValue(self._settings.get("window", {}).get("divider_opacity", 100))
-        o_slider.valueChanged.connect(self._set_divider_opacity)
-        o_layout.addWidget(o_label)
-        o_layout.addWidget(o_slider)
-        o_act.setDefaultWidget(o_widget)
-        div_menu.addAction(o_act)
 
+        # 4. Unified Divider Settings
+        add_slider_setting(menu, "Divider Width:", 0, 12, self.splitter.handleWidth(), self._set_divider_width)
+        add_slider_setting(menu, "Divider Opacity:", 0, 100, self._settings.get("window", {}).get("divider_opacity", 100), self._set_divider_opacity)
+        
         menu.exec(QCursor.pos())
 
     def _toggle_headers(self, show: bool):
@@ -574,6 +467,14 @@ class MainWindow(QMainWindow):
     def _toggle_ghost_mode(self, enabled: bool):
         self._auto_hide_ui = enabled
         self._update_ghost_mode()
+
+    def _update_text_scale(self, scale):
+        from app.theme import build_stylesheet
+        Fonts.TEXT_SCALE = scale
+        self.setStyleSheet(build_stylesheet())
+        for m in self._modules:
+            m.update_theme()
+            m.canvas.update()
 
     def _apply_theme(self, name: str):
         apply_theme(name, self._settings.get("ui", {}).get("color_overrides", {}))
@@ -687,6 +588,9 @@ class MainWindow(QMainWindow):
         module.close_requested.connect(self.remove_module)
         module.move_requested.connect(self._move_module)
         
+        # Self-test for stability
+        module.self_test()
+        
         if config:
             module.apply_settings(config)
             
@@ -734,6 +638,10 @@ class MainWindow(QMainWindow):
         if 0 <= new_idx < self.splitter.count():
             # In QSplitter, insertWidget moves the widget if it's already there
             self.splitter.insertWidget(new_idx, module)
+            # Sync internal list order so it saves correctly
+            if module in self._modules:
+                self._modules.pop(self._modules.index(module))
+                self._modules.insert(new_idx, module)
 
     # ── Layout Toggle ───────────────────────────────────────────────────────
 

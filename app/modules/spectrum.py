@@ -193,7 +193,9 @@ class SpectrumModule(BaseModule):
                     from PySide6.QtGui import QFontMetrics
                     fm = QFontMetrics(Fonts.small())
                     tw = fm.horizontalAdvance(lb) + 12
+                    
                     # Draw labels in the margin area underneath the grid
+                    painter.setFont(self.get_responsive_font(Fonts.small, tw, 14, lb))
                     self.draw_text_badge(painter, QRectF(px - tw/2, dh + 2, tw, 14), Qt.AlignCenter, lb, QColor(Colors.TEXT_DIM))
         for db in range(-80, 1, 10):
             y = dh * (1.0 - (db - db_min) / (db_max - db_min))
@@ -205,10 +207,14 @@ class SpectrumModule(BaseModule):
         # Spatial smoothing across frequency bins to reduce jaggedness/spikiness
         mag = np.convolve(mag, np.ones(5)/5.0, mode='same')
         
-        nb = min(len(mag), len(freqs))
+        # Ignore the DC bin (0 Hz) and bins above Nyquist to fix edge artifacts
+        mask = (freqs >= 20.0) & (freqs <= 20000.0)
+        px_x = map_frequencies_to_pixels(freqs[mask], w, self._scale)
+        mag_filtered = mag[mask]
+        nb = len(px_x)
+
         if nb < 2:
             return
-        px_x = map_frequencies_to_pixels(freqs[:nb], w, self._scale)
 
         if self._mode in ("Color Bars", "Both"):
             n_bars = 64
@@ -249,7 +255,7 @@ class SpectrumModule(BaseModule):
             step = max(1, nb // (int(w) * 2))
             points = []
             for i in range(0, nb, step):
-                frac = max(0, min(1, (mag[i] - db_min) / (db_max - db_min)))
+                frac = max(0, min(1, (mag_filtered[i] - db_min) / (db_max - db_min)))
                 points.append(QPointF(px_x[i], dh * (1.0 - frac)))
             
             if points:
@@ -281,9 +287,16 @@ class SpectrumModule(BaseModule):
                     px = map_frequencies_to_pixels(np.array([self._smooth_peak_freq]), w, self._scale)[0]
                     frac = max(0, min(1, (self._smooth_peak_db - db_min) / (db_max - db_min)))
                     py = dh * (1.0 - frac)
+                    
+                    # Readability: Keep badge inside view boundaries
+                    bx = max(10, min(w - tw - 10, px - tw/2))
+                    by = max(10, min(dh - 30, py - 25))
+
                     # Draw floating badge
-                    self.draw_text_badge(painter, QRectF(px - tw/2, py - 25, tw, 22), Qt.AlignCenter, txt, QColor(Colors.ACCENT))
-                    # Draw small circle at peak
+                    painter.setFont(self.get_responsive_font(Fonts.value, tw, 22, txt))
+                    self.draw_text_badge(painter, QRectF(bx, by, tw, 22), Qt.AlignCenter, txt, QColor(Colors.ACCENT))
+                    
+                    # Draw small circle at peak (don't constrain this, it marks the actual bin)
                     painter.setPen(Qt.NoPen); painter.setBrush(QColor(Colors.ACCENT))
                     painter.drawEllipse(QPointF(px, py), 3, 3)
                 else:

@@ -17,9 +17,12 @@ from app.dsp.filters import MultiBandFilter
 class StereometerModule(BaseModule):
 
     def __init__(self, audio_engine, parent=None):
-        self._display_mode = "Lissajous"
+        self._display_mode = "Vectorscope"
         self._color_mode = "Static"
         self._corr_mode = "Single-Band"
+        self._guide_mode = "Rhombus"
+        self._zoom = 1.0
+        self._show_labels = True
         self._minimal_mode = False
         self._halved_view = False
         self._left = np.zeros(1024, dtype=np.float32)
@@ -36,6 +39,9 @@ class StereometerModule(BaseModule):
             "display_mode": self._display_mode,
             "color_mode": self._color_mode,
             "corr_mode": self._corr_mode,
+            "guide_mode": self._guide_mode,
+            "zoom": self._zoom,
+            "show_labels": self._show_labels,
             "minimal_mode": self._minimal_mode,
             "halved_view": self._halved_view
         }
@@ -44,20 +50,42 @@ class StereometerModule(BaseModule):
         self._display_mode = settings.get("display_mode", self._display_mode)
         self._color_mode = settings.get("color_mode", self._color_mode)
         self._corr_mode = settings.get("corr_mode", self._corr_mode)
+        self._guide_mode = settings.get("guide_mode", self._guide_mode)
+        self._zoom = settings.get("zoom", self._zoom)
+        self._show_labels = settings.get("show_labels", self._show_labels)
         self._minimal_mode = settings.get("minimal_mode", self._minimal_mode)
         self._halved_view = settings.get("halved_view", self._halved_view)
 
     def build_context_menu(self, menu):
         from PySide6.QtGui import QActionGroup
         
-        dm = menu.addMenu("Display")
+        dm = menu.addMenu("Display Mode")
         dg = QActionGroup(self)
-        for d in ["Lissajous", "Linear", "Scaled"]:
+        for d in ["Vectorscope", "Lissajous"]:
             a = dm.addAction(d)
             a.setCheckable(True)
             a.setChecked(d == self._display_mode)
             a.triggered.connect(lambda checked, t=d: setattr(self, "_display_mode", t))
             dg.addAction(a)
+
+        gm = menu.addMenu("Guide Map")
+        gg = QActionGroup(self)
+        for g in ["None", "Rhombus", "Circle"]:
+            a = gm.addAction(g)
+            a.setCheckable(True)
+            a.setChecked(g == self._guide_mode)
+            a.triggered.connect(lambda checked, t=g: setattr(self, "_guide_mode", t))
+            gg.addAction(a)
+
+        zm = menu.addMenu("Zoom")
+        zg = QActionGroup(self)
+        # "it looks ugly" look this has a tendency to jump a lot even at 2x zoom, i'm giving user granularity.
+        for z in [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0]:
+            a = zm.addAction(f"{z}x")
+            a.setCheckable(True)
+            a.setChecked(z == self._zoom)
+            a.triggered.connect(lambda checked, v=z: setattr(self, "_zoom", v))
+            zg.addAction(a)
 
         cm = menu.addMenu("Color")
         cg = QActionGroup(self)
@@ -82,6 +110,11 @@ class StereometerModule(BaseModule):
         a.setChecked(self._minimal_mode)
         a.triggered.connect(lambda checked: setattr(self, "_minimal_mode", checked))
 
+        a = menu.addAction("Show Labels")
+        a.setCheckable(True)
+        a.setChecked(self._show_labels)
+        a.triggered.connect(lambda checked: setattr(self, "_show_labels", checked))
+
         a = menu.addAction("Halved View")
         a.setCheckable(True)
         a.setChecked(self._halved_view)
@@ -100,31 +133,68 @@ class StereometerModule(BaseModule):
         scope_h = h - corr_h
         cx = w / 2
 
+        # Reserve space for labels if they are showing
+        margin = 18 if self._show_labels else 4
+        
         if self._halved_view:
             cy = scope_h
-            radius = min(cx, scope_h) * 0.95
+            # In halved view, we only need margin at top and sides, not bottom
+            radius = min(cx - margin, scope_h - margin)
         else:
             cy = scope_h / 2
-            radius = min(cx, cy) * 0.85
+            # Leave room for labels on all 4 sides
+            radius = min(cx - margin, cy - margin)
 
-        # Crosshairs
+        # 1. Base Grid / Crosshair (Always visible)
+        painter.setPen(QPen(QColor(Colors.GRID), 0.5))
+        painter.drawLine(int(cx), int(cy - radius), int(cx), int(cy + radius))
+        painter.drawLine(int(cx - radius), int(cy), int(cx + radius), int(cy))
+
+        # 2. Guide Maps
         painter.setPen(QPen(QColor(Colors.GRID), 1))
-        if self._halved_view:
-            painter.drawLine(int(cx), 4, int(cx), int(cy))
-            painter.drawLine(4, int(cy), int(w - 4), int(cy))
+        if self._guide_mode == "Rhombus":
+            if self._halved_view:
+                painter.drawPolygon([QPointF(cx-radius, cy), QPointF(cx, cy-radius), QPointF(cx+radius, cy)])
+            else:
+                painter.drawPolygon([QPointF(cx, cy-radius), QPointF(cx+radius, cy), QPointF(cx, cy+radius), QPointF(cx-radius, cy)])
+        elif self._guide_mode == "Circle":
+            if self._halved_view:
+                painter.drawArc(int(cx-radius), int(cy-radius), int(radius*2), int(radius*2), 0, 180 * 16)
+                painter.drawLine(int(cx-radius), int(cy), int(cx+radius), int(cy))
+            else:
+                painter.drawEllipse(QPointF(cx, cy), radius, radius)
+
+        # Labels (only if enabled)
+        if self._show_labels:
             painter.setFont(Fonts.small())
             painter.setPen(QColor(Colors.TEXT_DIM))
-            painter.drawText(QRectF(cx - 6, 2, 12, 12), Qt.AlignCenter, "M")
-            painter.drawText(QRectF(2, cy - 14, 12, 12), Qt.AlignCenter, "S")
-            painter.drawText(QRectF(w - 14, cy - 14, 12, 12), Qt.AlignCenter, "S")
-        else:
-            painter.drawLine(int(cx), 4, int(cx), int(scope_h - 4))
-            painter.drawLine(4, int(cy), int(w - 4), int(cy))
-            painter.setFont(Fonts.small())
-            painter.setPen(QColor(Colors.TEXT_DIM))
-            painter.drawText(QRectF(cx - 6, 2, 12, 12), Qt.AlignCenter, "M")
-            painter.drawText(QRectF(2, cy - 6, 12, 12), Qt.AlignCenter, "S")
-            painter.drawText(QRectF(w - 14, cy - 6, 12, 12), Qt.AlignCenter, "S")
+            if self._halved_view:
+                if self._display_mode == "Vectorscope":
+                    painter.setFont(self.get_responsive_font(Fonts.small, 12, 12, "M"))
+                    painter.drawText(QRectF(cx - 6, 2, 12, 12), Qt.AlignCenter, "M")
+                    painter.setFont(self.get_responsive_font(Fonts.small, 12, 12, "S"))
+                    painter.drawText(QRectF(cx - radius - 14, cy - 14, 12, 12), Qt.AlignCenter, "S")
+                    painter.drawText(QRectF(cx + radius + 2, cy - 14, 12, 12), Qt.AlignCenter, "S")
+                else:
+                    painter.setFont(self.get_responsive_font(Fonts.small, 12, 12, "L"))
+                    painter.drawText(QRectF(cx - radius - 14, cy - 14, 12, 12), Qt.AlignCenter, "L")
+                    painter.setFont(self.get_responsive_font(Fonts.small, 12, 12, "R"))
+                    painter.drawText(QRectF(cx + radius + 2, cy - 14, 12, 12), Qt.AlignCenter, "R")
+            else:
+                if self._display_mode == "Vectorscope":
+                    painter.setFont(self.get_responsive_font(Fonts.small, 20, 14, "M"))
+                    painter.drawText(QRectF(cx - 10, cy - radius - 16, 20, 14), Qt.AlignCenter, "M")
+                    painter.drawText(QRectF(cx - 10, cy + radius + 2, 20, 14), Qt.AlignCenter, "M")
+                    painter.setFont(self.get_responsive_font(Fonts.small, 16, 14, "S"))
+                    painter.drawText(QRectF(cx - radius - 18, cy - 7, 16, 14), Qt.AlignCenter, "S")
+                    painter.drawText(QRectF(cx + radius + 2, cy - 7, 16, 14), Qt.AlignCenter, "S")
+                else:
+                    painter.setFont(self.get_responsive_font(Fonts.small, 20, 14, "L"))
+                    painter.drawText(QRectF(cx - 10, cy - radius - 16, 20, 14), Qt.AlignCenter, "L")
+                    painter.drawText(QRectF(cx - 10, cy + radius + 2, 20, 14), Qt.AlignCenter, "L")
+                    painter.setFont(self.get_responsive_font(Fonts.small, 16, 14, "R"))
+                    painter.drawText(QRectF(cx - radius - 18, cy - 7, 16, 14), Qt.AlignCenter, "R")
+                    painter.drawText(QRectF(cx + radius + 2, cy - 7, 16, 14), Qt.AlignCenter, "R")
 
         left, right = self._left, self._right
 
@@ -166,9 +236,10 @@ class StereometerModule(BaseModule):
                     painter.setBrush(QBrush(QColor(col))); painter.setPen(Qt.NoPen)
                     painter.drawRoundedRect(QRectF(bx - 2, bar_y + j * bh + 1, 4, bh - 2), 1, 1)
 
-            painter.setFont(Fonts.small())
             painter.setPen(QColor(Colors.TEXT_DIM))
+            painter.setFont(self.get_responsive_font(Fonts.small, 20, inner_h, "-1"))
             painter.drawText(QRectF(margin, bar_y - 1, 20, inner_h), Qt.AlignVCenter, "-1")
+            painter.setFont(self.get_responsive_font(Fonts.small, 20, inner_h, "+1"))
             painter.drawText(QRectF(margin + bar_w - 16, bar_y - 1, 20, inner_h), Qt.AlignVCenter, "+1")
 
     def _draw_dots(self, painter, left, right, cx, cy, radius, color, alpha):
@@ -179,16 +250,18 @@ class StereometerModule(BaseModule):
         l_seg = left[::step]
         r_seg = right[::step]
         
-        if self._display_mode == "Lissajous":
-            xs = cx + (l_seg + r_seg) * 0.5 * radius
-            ys = cy - (l_seg - r_seg) * 0.5 * radius
-        elif self._display_mode == "Linear":
+        # Apply zoom to segments
+        l_seg = l_seg * self._zoom
+        r_seg = r_seg * self._zoom
+
+        if self._display_mode == "Vectorscope":
+            # Rotated M/S view (Standard Vectorscope)
+            xs = cx + (l_seg - r_seg) * 0.5 * radius
+            ys = cy - (l_seg + r_seg) * 0.5 * radius
+        else:
+            # Raw L/R view (True Lissajous math curve)
             xs = cx + r_seg * radius
             ys = cy - l_seg * radius
-        else:
-            s = 3.0
-            xs = cx + (np.tanh(l_seg * s) + np.tanh(r_seg * s)) * 0.5 * radius
-            ys = cy - (np.tanh(l_seg * s) - np.tanh(r_seg * s)) * 0.5 * radius
         
         points = [QPointF(xs[i], ys[i]) for i in range(len(xs))]
 

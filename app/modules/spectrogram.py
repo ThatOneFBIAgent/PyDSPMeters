@@ -272,6 +272,7 @@ class SpectrogramModule(BaseModule):
                         from PySide6.QtGui import QFontMetrics
                         fm = QFontMetrics(Fonts.small())
                         tw = fm.horizontalAdvance(lb) + 12
+                        painter.setFont(self.get_responsive_font(Fonts.small, tw, 12, lb))
                         self.draw_text_badge(painter, QRectF(6, fy - 10, tw, 12), Qt.AlignLeft, lb, QColor(255, 255, 255, 150))
 
         if self._show_piano:

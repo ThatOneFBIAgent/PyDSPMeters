@@ -77,7 +77,7 @@ class VUMeterModule(BaseModule):
 
         calm = menu.addMenu("Cal (dB)")
         calg = QActionGroup(self)
-        for c in [-20, -10, 0, 10, 20]:
+        for c in [-20, -15, -10, -5, 0, 5, 10, 15, 20]:
             a = calm.addAction(str(c))
             a.setCheckable(True)
             a.setChecked(abs(c - self._cal_offset) < 0.1)
@@ -176,7 +176,7 @@ class VUMeterModule(BaseModule):
                 if label and w > 130:
                     lr = radius * 0.76
                     lx, ly = cx + lr * math.cos(angle) - 12, cy - lr * math.sin(angle) - 7
-                    painter.setFont(Fonts.vu_scale())
+                    painter.setFont(self.get_responsive_font(Fonts.vu_scale, 24, 14, label))
                     painter.setPen(col)
                     painter.drawText(QRectF(lx, ly, 24, 14), Qt.AlignCenter, label)
         else:
@@ -206,12 +206,12 @@ class VUMeterModule(BaseModule):
                 if label and w > 130:
                     lr = radius * 0.82
                     lx, ly = cx + lr * math.cos(angle) - 12, cy - lr * math.sin(angle) - 7
-                    painter.setFont(Fonts.vu_scale())
+                    painter.setFont(self.get_responsive_font(Fonts.vu_scale, 24, 14, label))
                     painter.setPen(col)
                     painter.drawText(QRectF(lx, ly, 24, 14), Qt.AlignCenter, label)
 
         # Labels
-        painter.setFont(Fonts.small())
+        painter.setFont(self.get_responsive_font(Fonts.small, 80, 20, self._channel))
         painter.setPen(QColor(Colors.TEXT_DIM))
         painter.drawText(QRectF(cx - 40, cy - radius * 0.45, 80, 20), Qt.AlignCenter, self._channel)
 
@@ -277,4 +277,5 @@ class VUMeterModule(BaseModule):
             painter.drawEllipse(QPointF(w - 12, 12), 4, 4)
             if w > 85:
                 painter.setPen(QColor(Colors.TEXT_DIM))
+                painter.setFont(self.get_responsive_font(Fonts.small, 40, 12, "CLIP"))
                 painter.drawText(QRectF(w - 58, 6, 40, 12), Qt.AlignRight, "CLIP")

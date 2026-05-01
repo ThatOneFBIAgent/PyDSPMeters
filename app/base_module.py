@@ -90,7 +90,8 @@ class RenderCanvas(QWidget):
             try:
                 self._render_func(painter, w, h)
             except Exception:
-                pass  # Silently handle render errors
+                import traceback
+                traceback.print_exc()
         painter.end()
 
 
@@ -132,6 +133,62 @@ class BaseModule(QWidget):
         self.setStyleSheet(f"#baseModule {{ background: {Colors.BG_DARK}; border: 1px solid {Colors.BORDER}; border-radius: 4px; }}")
         if hasattr(self, "header"):
             self.header.update_theme()
+
+    @staticmethod
+    def get_responsive_font(font_func, w=None, h=None, text=None, min_size=5):
+        """
+        Returns a font scaled by the global TEXT_SCALE, but further reduced
+        if it doesn't fit within the given width/height constraints.
+        """
+        try:
+            if not callable(font_func):
+                return QFont()
+                
+            font = font_func() # Gets the global scaled font
+            size = font.pointSize()
+            if size <= 0: size = 8 # Safety fallback
+            
+            # If dimensions are too small to calculate, just return the base font
+            if (w is not None and w <= 0) or (h is not None and h <= 0):
+                return font
+
+            # Vertical constraint check
+            if h is not None and h < size * 1.6:
+                size = max(min_size, int(h * 0.6))
+                font.setPointSize(size)
+                
+            # Horizontal constraint check (if text is provided)
+            if text and w is not None:
+                from PySide6.QtGui import QFontMetrics
+                fm = QFontMetrics(font)
+                # Avoid infinite loops if horizontalAdvance is broken
+                limit = 20
+                txt_str = str(text)
+                while fm.horizontalAdvance(txt_str) > w * 0.95 and size > min_size and limit > 0:
+                    size -= 1
+                    font.setPointSize(size)
+                    fm = QFontMetrics(font)
+                    limit -= 1
+                    
+            return font
+        except Exception as e:
+            import traceback
+            print(f"Responsive Font Error for '{text}': {e}")
+            traceback.print_exc()
+            return font_func() if callable(font_func) else QFont()
+
+    def self_test(self):
+        """Perform a basic health check on the module."""
+        issues = []
+        if not hasattr(self, 'canvas') or self.canvas is None:
+            issues.append("Canvas not initialized")
+        if not hasattr(self, 'audio_engine') or self.audio_engine is None:
+            issues.append("Audio engine not connected")
+        
+        if issues:
+            print(f"[{self._title}] Self-Test Failed: {', '.join(issues)}")
+            return False
+        return True
 
     def build_context_menu(self, menu):
         """Override to add QActions to the module's right-click menu."""

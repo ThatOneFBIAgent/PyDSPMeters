@@ -204,7 +204,7 @@ class LoudnessModule(BaseModule):
             gx = m + idx * (group_w + group_gap)
             
             # Label
-            painter.setFont(Fonts.small())
+            painter.setFont(self.get_responsive_font(Fonts.small, group_w, lbl_h, labels[meter_idx]))
             self.draw_text_badge(painter, QRectF(gx, m, group_w, lbl_h), Qt.AlignCenter, labels[meter_idx], QColor(Colors.TEXT_DIM))
             
             # Get values
@@ -247,11 +247,12 @@ class LoudnessModule(BaseModule):
             # Value Badge
             ps_col = pc_base or (Colors.CLIP_LED if v_max > -1 else (Colors.PEAK_LED if v_max > -6 else Colors.METER_LOW))
             ps = f"{v_max:.0f}" if v_max > -100 else "-∞"
+            painter.setFont(self.get_responsive_font(Fonts.value, group_w, val_h, ps))
             self.draw_text_badge(painter, QRectF(gx, bar_y + bar_h + 2, group_w, val_h), Qt.AlignCenter, ps, QColor(ps_col))
 
         # Vertical Mode Indicator (Horizontal strip at bottom)
         mode_rect = QRectF(m, h - 14, w - m*2, 10)
-        painter.setFont(Fonts.small())
+        painter.setFont(self.get_responsive_font(Fonts.small, mode_rect.width(), mode_rect.height(), self._mode))
         self.draw_text_badge(painter, mode_rect, Qt.AlignCenter, self._mode, QColor(Colors.ACCENT), QColor(0, 0, 0, 100))
 
     def _render_horizontal(self, painter, w, h, active_indices, labels, db_min, db_max, m):
@@ -281,7 +282,7 @@ class LoudnessModule(BaseModule):
             ry = m + idx * (row_h + row_gap)
             
             # Label
-            painter.setFont(Fonts.small())
+            painter.setFont(self.get_responsive_font(Fonts.small, lbl_w, row_h, labels[meter_idx]))
             self.draw_text_badge(painter, QRectF(m + mode_w, ry, lbl_w, row_h), Qt.AlignVCenter | Qt.AlignRight, labels[meter_idx], QColor(Colors.TEXT_DIM))
             
             # Get values
@@ -328,7 +329,7 @@ class LoudnessModule(BaseModule):
                 v_max = np.max(raw)
                 
             # Value Badge
-            painter.setFont(Fonts.value())
+            painter.setFont(self.get_responsive_font(Fonts.value, val_w, row_h, ps))
             ps = f"{v_max:.1f}" if v_max > -100 else "-∞"
             ps_col = Colors.CLIP_LED if v_max > -1 else (Colors.PEAK_LED if v_max > -6 else Colors.METER_LOW)
             self.draw_text_badge(painter, QRectF(bar_x + bar_w + 2, ry, val_w, row_h), Qt.AlignVCenter | Qt.AlignRight, ps, QColor(ps_col))

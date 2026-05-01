@@ -33,7 +33,6 @@ def build():
     cmd = [
         sys.executable, "-m", "nuitka",
         "--standalone",
-        "--onefile",
         "--enable-plugin=pyside6",
         "--windows-console-mode=disable",
         "--include-package=app",
@@ -62,8 +61,15 @@ def build():
             print(f"Copying 'settings.json' to {dist_dir}...")
             shutil.copy2("settings.json", os.path.join(dist_dir, "settings.json"))
         
-        print(f"\nYour portable executable is located at: {exe_path}")
-        print("Note: 'settings.json' has been copied next to the executable to preserve your configuration.")
+        print(f"\nYour standalone folder is located at: {dist_dir}")
+        
+        # 5. Create ZIP for Installer/Distribution
+        zip_name = "PyDSPMeters_Standalone"
+        print(f"Creating {zip_name}.zip...")
+        shutil.make_archive(os.path.join("dist", zip_name), 'zip', dist_dir)
+        print(f"ZIP created: {os.path.abspath(os.path.join('dist', zip_name + '.zip'))}")
+        
+        print("\nNote: Use the generated ZIP with Inno Setup if you want a light 'Web Installer' or a packaged extraction.")
         
     except subprocess.CalledProcessError as e:
         print(f"\n--- Build Failed! ---")

@@ -110,6 +110,17 @@ def detect_peak_frequency(magnitude_db: np.ndarray, freqs: np.ndarray,
     filtered_mag = magnitude_db[mask]
     filtered_freq = freqs[mask]
     idx = np.argmax(filtered_mag)
+    
+    # Quadratic interpolation for better accuracy
+    if 0 < idx < len(filtered_mag) - 1:
+        y1, y2, y3 = filtered_mag[idx-1], filtered_mag[idx], filtered_mag[idx+1]
+        denom = (y1 - 2*y2 + y3)
+        if abs(denom) > 1e-6:
+            p = 0.5 * (y1 - y3) / denom
+            peak_f = filtered_freq[idx] + p * (filtered_freq[idx] - filtered_freq[idx-1])
+            peak_db = y2 - 0.25 * (y1 - y3) * p
+            return float(peak_f), float(peak_db)
+            
     return float(filtered_freq[idx]), float(filtered_mag[idx])
 
 
