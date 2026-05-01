@@ -86,6 +86,12 @@ pip install -r requirements.txt
 python main.py
 ```
 
+Additionally you can run `python build_dist.py` to compile a standalone executable, if you have nuitka and a C++ compiler installed. Or just create a shortcut (or run via terminal) using **pythonw** to hide the console:
+
+```bash
+pythonw "path/to/main.pyw"
+```
+
 ---
 
 ## ⌨️ Shortcuts & Workflow
