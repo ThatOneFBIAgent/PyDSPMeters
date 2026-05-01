@@ -16,6 +16,9 @@ PyDSPMeters is a modular, ultra-responsive audio monitoring suite designed to ri
 ![4](demos/4.png)
 ![5](demos/5.png)
 ![6](demos/6.png)
+![7](demos/7.png)
+![8](demos/8.png)
+![9](demos/9.png)
 
 ---
 

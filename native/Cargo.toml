@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.28", features = ["extension-module"] }
 numpy = "0.28"
+rustfft = "6.4.1"
 
 [profile.release]
 opt-level = 3

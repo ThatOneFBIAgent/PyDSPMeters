@@ -255,7 +255,7 @@ class VUMeterModule(BaseModule):
         
         if is_dark:
             # Thick "Physical" Needles
-            needle_cols = [QColor("#ff4422"), QColor("#ff8844")] if is_stereo else [QColor("#cc2200")]
+            needle_cols = [QColor("#ff4422"), QColor("#ff8844")] if is_stereo else [QColor("#ff4422")]
             for val, col in zip(needle_vals, needle_cols):
                 nf = max(0, min(1, (val + 20) / 23.0))
                 na = math.radians(angle_start - nf * (angle_start - angle_end))
@@ -273,7 +273,7 @@ class VUMeterModule(BaseModule):
             painter.drawEllipse(QPointF(cx, cy), 3, 3)
         else:
             # Sleek Modern Needles
-            needle_cols = [QColor(Colors.ACCENT), QColor(Colors.ACCENT_PINK)] if is_stereo else [QColor(Colors.VU_NEEDLE)]
+            needle_cols = [QColor(Colors.ACCENT), QColor(Colors.ACCENT_PINK)] if is_stereo else [QColor(Colors.ACCENT)]
             for val, col in zip(needle_vals, needle_cols):
                 nf = max(0, min(1, (val + 20) / 23.0))
                 na = math.radians(angle_start - nf * (angle_start - angle_end))

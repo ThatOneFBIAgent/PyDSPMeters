@@ -47,7 +47,7 @@ class StereometerModule(BaseModule):
         }
 
     _VALID_DISPLAY_MODES = {"Vectorscope", "Lissajous"}
-    _VALID_COLOR_MODES = {"Static", "RGB", "Multi-Band"}
+    _VALID_COLOR_MODES = {"Static", "Multi-Band", "Multi-Band (RGB)"}
     _VALID_CORR_MODES = {"Single-Band", "Multi-Band"}
     _VALID_GUIDE_MODES = {"None", "Rhombus", "Circle"}
 
@@ -98,7 +98,7 @@ class StereometerModule(BaseModule):
 
         cm = menu.addMenu("Color")
         cg = QActionGroup(self)
-        for c in ["Static", "RGB", "Multi-Band"]:
+        for c in ["Static", "Multi-Band", "Multi-Band (RGB)"]:
             a = cm.addAction(c)
             a.setCheckable(True)
             a.setChecked(c == self._color_mode)
@@ -209,15 +209,19 @@ class StereometerModule(BaseModule):
 
         left, right = self._left, self._right
 
-        if self._color_mode == "Multi-Band":
+        if self._color_mode.startswith("Multi-Band"):
             low_l, mid_l, high_l = self._multiband.split(left)
             low_r, mid_r, high_r = self._multiband.split(right)
-            for bl, br, col in [(low_l, low_r, Colors.BAND_LOW),
-                                (mid_l, mid_r, Colors.BAND_MID),
-                                (high_l, high_r, Colors.BAND_HIGH)]:
+            
+            if self._color_mode == "Multi-Band (RGB)":
+                cols = ["#FF3333", "#33FF33", "#3388FF"]
+            else:
+                cols = [Colors.BAND_LOW, Colors.BAND_MID, Colors.BAND_HIGH]
+                
+            for bl, br, col in zip([low_l, mid_l, high_l], [low_r, mid_r, high_r], cols):
                 self._draw_dots(painter, bl, br, cx, cy, radius, QColor(col), 100)
         else:
-            col = QColor(Colors.ACCENT) if self._color_mode == "Static" else None
+            col = QColor(Colors.ACCENT)
             self._draw_dots(painter, left, right, cx, cy, radius, col, 160)
 
         # Correlation bar

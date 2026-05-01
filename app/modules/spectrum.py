@@ -22,13 +22,16 @@ class SpectrumModule(BaseModule):
         self._fft_size = 4096
         self._scale = "logarithmic"
         self._mode = "FFT"
-        self._channel = "Left"
+        self._orientation = "Horizontal"
+        self._channel = "L+R"
         self._smoothing = 0.85
         self._show_note = True
         self._show_floating_note = False
-        # Accumulation buffer — always holds enough samples for the largest FFT
-        self._acc_buf = np.zeros(max(16384, self._fft_size * 2), dtype=np.float32)
-        self._smoothed = np.full(self._fft_size // 2 + 1, -120.0, dtype=np.float64)
+        # Accumulation buffers
+        self._acc_buf_l = np.zeros(max(16384, self._fft_size * 2), dtype=np.float32)
+        self._acc_buf_r = np.zeros(max(16384, self._fft_size * 2), dtype=np.float32)
+        self._smoothed_l = np.full(self._fft_size // 2 + 1, -120.0, dtype=np.float64)
+        self._smoothed_r = np.full(self._fft_size // 2 + 1, -120.0, dtype=np.float64)
         self._peak_freq = 0.0
         self._peak_db = -120.0
         self._smooth_peak_freq = 0.0
@@ -43,6 +46,7 @@ class SpectrumModule(BaseModule):
         return {
             "fft_size": self._fft_size,
             "scale": self._scale,
+            "orientation": getattr(self, "_orientation", "Horizontal"),
             "mode": self._mode,
             "channel": self._channel,
             "smoothing": self._smoothing,
@@ -54,6 +58,7 @@ class SpectrumModule(BaseModule):
     def apply_settings(self, settings):
         self._set_fft_size(settings.get("fft_size", self._fft_size))
         self._scale = settings.get("scale", self._scale)
+        self._orientation = settings.get("orientation", getattr(self, "_orientation", "Horizontal"))
         self._mode = settings.get("mode", self._mode)
         self._channel = settings.get("channel", self._channel)
         self._smoothing = float(settings.get("smoothing", self._smoothing))
@@ -99,10 +104,19 @@ class SpectrumModule(BaseModule):
             a.setChecked(s.lower() == self._scale)
             a.triggered.connect(lambda checked, t=s: setattr(self, "_scale", t.lower()))
             scg.addAction(a)
-            
+
+        om = menu.addMenu("Orientation")
+        og = QActionGroup(self)
+        for o in ["Auto", "Horizontal", "Vertical"]:
+            a = om.addAction(o)
+            a.setCheckable(True)
+            a.setChecked(o == getattr(self, "_orientation", "Horizontal"))
+            a.triggered.connect(lambda checked, t=o: setattr(self, "_orientation", t))
+            og.addAction(a)
+
         cm = menu.addMenu("Channel")
         cg = QActionGroup(self)
-        for c in ["Left", "Right", "Mid", "Side"]:
+        for c in ["L+R", "Left", "Right", "Mid", "Side"]:
             a = cm.addAction(c)
             a.setCheckable(True)
             a.setChecked(c == self._channel)
@@ -132,64 +146,73 @@ class SpectrumModule(BaseModule):
     def _set_fft_size(self, size):
         self._fft_size = size
         n = size // 2 + 1
-        self._smoothed = np.full(n, -120.0, dtype=np.float64)
-        # Ensure accumulation buffer is always large enough for the FFT
+        self._smoothed_l = np.full(n, -120.0, dtype=np.float64)
+        self._smoothed_r = np.full(n, -120.0, dtype=np.float64)
         min_buf = max(16384, size * 2)
-        if len(self._acc_buf) < min_buf:
-            old = self._acc_buf
-            self._acc_buf = np.zeros(min_buf, dtype=np.float32)
-            # Preserve existing data
-            copy_n = min(len(old), min_buf)
-            self._acc_buf[-copy_n:] = old[-copy_n:]
+        if len(self._acc_buf_l) < min_buf:
+            old_l, old_r = self._acc_buf_l, self._acc_buf_r
+            self._acc_buf_l = np.zeros(min_buf, dtype=np.float32)
+            self._acc_buf_r = np.zeros(min_buf, dtype=np.float32)
+            copy_n = min(len(old_l), min_buf)
+            self._acc_buf_l[-copy_n:] = old_l[-copy_n:]
+            self._acc_buf_r[-copy_n:] = old_r[-copy_n:]
 
     def on_audio_data(self, data: np.ndarray):
         l = data[:, 0]
         r = data[:, 1] if data.shape[1] > 1 else l
-        sig = {"Left": l, "Right": r, "Mid": (l+r)*0.5, "Side": (l-r)*0.5
-               }.get(self._channel, l)
-
-        # Update accumulation buffer
-        n = len(sig)
-        buf_len = len(self._acc_buf)
-        if n >= buf_len:
-            self._acc_buf[:] = sig[-buf_len:]
+        
+        is_stereo = self._channel == "L+R"
+        
+        if is_stereo:
+            sig_l, sig_r = l, r
         else:
-            self._acc_buf = np.roll(self._acc_buf, -n)
-            self._acc_buf[-n:] = sig
+            sig_l = {"Left": l, "Right": r, "Mid": (l+r)*0.5, "Side": (l-r)*0.5}.get(self._channel, l)
+            sig_r = sig_l
 
-        # Process multiple sub-steps for speed
+        n = len(sig_l)
+        buf_len = len(self._acc_buf_l)
+        if n >= buf_len:
+            self._acc_buf_l[:] = sig_l[-buf_len:]
+            if is_stereo: self._acc_buf_r[:] = sig_r[-buf_len:]
+        else:
+            self._acc_buf_l = np.roll(self._acc_buf_l, -n)
+            self._acc_buf_l[-n:] = sig_l
+            if is_stereo:
+                self._acc_buf_r = np.roll(self._acc_buf_r, -n)
+                self._acc_buf_r[-n:] = sig_r
+
         n_steps = int(self._speed)
         step_size = n // n_steps if n_steps > 1 else n
         
         for s in range(n_steps):
-            # FFT on the last fft_size samples from the accumulation buffer, 
-            # sliding backwards for sub-steps
             offset = (n_steps - 1 - s) * step_size
-            start_idx = len(self._acc_buf) - self._fft_size - offset
-            end_idx = len(self._acc_buf) - offset
-            
-            # Guard against negative indices
-            if start_idx < 0:
-                start_idx = 0
-            if end_idx <= start_idx:
-                continue
+            start_idx = len(self._acc_buf_l) - self._fft_size - offset
+            end_idx = len(self._acc_buf_l) - offset
+            if start_idx < 0: start_idx = 0
+            if end_idx <= start_idx: continue
                 
-            segment = self._acc_buf[start_idx:end_idx]
-            if len(segment) < self._fft_size:
-                # Pad with zeros if not enough data yet (startup)
-                padded = np.zeros(self._fft_size, dtype=np.float32)
-                padded[-len(segment):] = segment
-                segment = padded
+            seg_l = self._acc_buf_l[start_idx:end_idx]
+            if len(seg_l) < self._fft_size:
+                seg_l = np.pad(seg_l, (self._fft_size - len(seg_l), 0))
             
-            mag = compute_fft(segment, self._fft_size)
-
-            nb = min(len(mag), len(self._smoothed))
+            mag_l = compute_fft(seg_l, self._fft_size)
+            nb = min(len(mag_l), len(self._smoothed_l))
             a = 1.0 - self._smoothing
-            self._smoothed[:nb] = self._smoothed[:nb] * self._smoothing + mag[:nb] * a
+            self._smoothed_l[:nb] = self._smoothed_l[:nb] * self._smoothing + mag_l[:nb] * a
+            
+            if is_stereo:
+                seg_r = self._acc_buf_r[start_idx:end_idx]
+                if len(seg_r) < self._fft_size:
+                    seg_r = np.pad(seg_r, (self._fft_size - len(seg_r), 0))
+                mag_r = compute_fft(seg_r, self._fft_size)
+                self._smoothed_r[:nb] = self._smoothed_r[:nb] * self._smoothing + mag_r[:nb] * a
+            else:
+                self._smoothed_r[:nb] = self._smoothed_l[:nb]
 
         freqs = fft_frequencies(self._fft_size, self.audio_engine.sample_rate)
-        self._peak_freq, self._peak_db = detect_peak_frequency(
-            self._smoothed[:len(freqs)], freqs)
+        # Use the max of L and R for peak detection
+        mag_max = np.maximum(self._smoothed_l[:len(freqs)], self._smoothed_r[:len(freqs)])
+        self._peak_freq, self._peak_db = detect_peak_frequency(mag_max, freqs)
             
         # Smoothing for peak detection
         if self._peak_db > -90:
@@ -206,40 +229,69 @@ class SpectrumModule(BaseModule):
             self._smooth_peak_db = -120.0
 
     def _render(self, painter, w, h):
+        is_vertical = getattr(self, "_orientation", "Horizontal") == "Vertical"
+        if getattr(self, "_orientation", "Horizontal") == "Auto":
+            is_vertical = h > w * 1.1
+
         db_min, db_max = -90.0, 0.0
         mb = 16
-        dh = h - mb
+        if is_vertical:
+            dh = w - mb
+            dw = h
+        else:
+            dh = h - mb
+            dw = w
+            
         freqs = fft_frequencies(self._fft_size, self.audio_engine.sample_rate)
-        # Grid
         painter.setFont(Fonts.small())
-        for gf in [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]:
-            px = map_frequencies_to_pixels(np.array([gf]), w, self._scale)[0]
-            if 0 < px < w:
-                painter.setPen(QPen(QColor(Colors.GRID), 1, Qt.DotLine))
-                painter.drawLine(int(px), 0, int(px), int(dh))
-                if w > 100:
-                    lb = f"{gf}" if gf < 1000 else f"{gf//1000}k"
-                    from PySide6.QtGui import QFontMetrics
-                    fm = QFontMetrics(Fonts.small())
-                    tw = fm.horizontalAdvance(lb) + 12
-                    
-                    # Draw labels in the margin area underneath the grid
-                    painter.setFont(self.get_responsive_font(Fonts.small, tw, 14, lb))
-                    self.draw_text_badge(painter, QRectF(px - tw/2, dh + 2, tw, 14), Qt.AlignCenter, lb, QColor(Colors.TEXT_DIM))
-        for db in range(-80, 1, 10):
-            y = dh * (1.0 - (db - db_min) / (db_max - db_min))
-            if 0 < y < dh:
-                painter.setPen(QPen(QColor(Colors.GRID), 1, Qt.DotLine))
-                painter.drawLine(0, int(y), w, int(y))
-
-        mag = self._smoothed
-        # Spatial smoothing across frequency bins to reduce jaggedness/spikiness
-        mag = np.convolve(mag, np.ones(5)/5.0, mode='same')
         
-        # Ignore the DC bin (0 Hz) and bins above Nyquist to fix edge artifacts
+        # Grid
+        for gf in [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]:
+            px = map_frequencies_to_pixels(np.array([gf]), dw, self._scale)[0]
+            if 0 < px < dw:
+                painter.setPen(QPen(QColor(Colors.GRID), 1, Qt.DotLine))
+                if is_vertical:
+                    py = h - px
+                    painter.drawLine(0, int(py), int(dh), int(py))
+                    if h > 100:
+                        lb = f"{gf}" if gf < 1000 else f"{gf//1000}k"
+                        from PySide6.QtGui import QFontMetrics
+                        fm = QFontMetrics(Fonts.small())
+                        tw = fm.horizontalAdvance(lb) + 12
+                        painter.setFont(self.get_responsive_font(Fonts.small, mb, 14, lb))
+                        self.draw_text_badge(painter, QRectF(dh + 2, py - 7, mb - 4, 14), Qt.AlignLeft | Qt.AlignVCenter, lb, QColor(Colors.TEXT_DIM))
+                else:
+                    painter.drawLine(int(px), 0, int(px), int(dh))
+                    if w > 100:
+                        lb = f"{gf}" if gf < 1000 else f"{gf//1000}k"
+                        from PySide6.QtGui import QFontMetrics
+                        fm = QFontMetrics(Fonts.small())
+                        tw = fm.horizontalAdvance(lb) + 12
+                        painter.setFont(self.get_responsive_font(Fonts.small, tw, 14, lb))
+                        self.draw_text_badge(painter, QRectF(px - tw/2, dh + 2, tw, 14), Qt.AlignCenter, lb, QColor(Colors.TEXT_DIM))
+                        
+        for db in range(-80, 1, 10):
+            frac = (db - db_min) / (db_max - db_min)
+            if is_vertical:
+                x = dh * frac
+                if 0 < x < dh:
+                    painter.setPen(QPen(QColor(Colors.GRID), 1, Qt.DotLine))
+                    painter.drawLine(int(x), 0, int(x), h)
+            else:
+                y = dh * (1.0 - frac)
+                if 0 < y < dh:
+                    painter.setPen(QPen(QColor(Colors.GRID), 1, Qt.DotLine))
+                    painter.drawLine(0, int(y), w, int(y))
+
+        mag_l = np.convolve(self._smoothed_l, np.ones(5)/5.0, mode='same')
+        mag_r = np.convolve(self._smoothed_r, np.ones(5)/5.0, mode='same')
+        
         mask = (freqs >= 20.0) & (freqs <= 20000.0)
-        px_x = map_frequencies_to_pixels(freqs[mask], w, self._scale)
-        mag_filtered = mag[mask]
+        px_x = map_frequencies_to_pixels(freqs[mask], dw, self._scale)
+        mag_l_filtered = mag_l[mask]
+        mag_r_filtered = mag_r[mask]
+        mag_max_filtered = np.maximum(mag_l_filtered, mag_r_filtered)
+        mag_min_filtered = np.minimum(mag_l_filtered, mag_r_filtered)
         nb = len(px_x)
 
         if nb < 2:
@@ -247,84 +299,111 @@ class SpectrumModule(BaseModule):
 
         if self._mode in ("Color Bars", "Both"):
             n_bars = 64
-            bw = max(2, w / n_bars - 1)
-            # Pre-calculate bar values with interpolation for low-end gaps
+            bw = max(2, dw / n_bars - 1)
             bar_vals = np.zeros(n_bars)
             for b in range(n_bars):
-                xs, xe = b / n_bars * w, (b + 1) / n_bars * w
+                xs, xe = b / n_bars * dw, (b + 1) / n_bars * dw
                 bar_mask = (px_x >= xs) & (px_x < xe)
                 if np.any(bar_mask):
-                    bar_vals[b] = np.mean(mag_filtered[bar_mask])
+                    bar_vals[b] = np.mean(mag_max_filtered[bar_mask])
                 else:
-                    # Interpolate from nearest bin if no bin falls exactly in this bar
                     idx = np.searchsorted(px_x, xs)
                     if idx > 0 and idx < nb:
-                        # Linear interpolation between nearest bins
                         x0, x1 = px_x[idx-1], px_x[idx]
-                        v0, v1 = mag_filtered[idx-1], mag_filtered[idx]
+                        v0, v1 = mag_max_filtered[idx-1], mag_max_filtered[idx]
                         t = (xs - x0) / (x1 - x0) if x1 > x0 else 0
                         bar_vals[b] = v0 + t * (v1 - v0)
-                    elif idx == 0:
-                        bar_vals[b] = mag_filtered[0]
-                    else:
-                        bar_vals[b] = mag_filtered[nb-1]
+                    elif idx == 0: bar_vals[b] = mag_max_filtered[0]
+                    else: bar_vals[b] = mag_max_filtered[nb-1]
 
             for b in range(n_bars):
-                xs = b / n_bars * w
+                xs = b / n_bars * dw
                 ff = max(0, min(1, (bar_vals[b] - db_min) / (db_max - db_min)))
                 bh = ff * dh
                 hf = b / n_bars
                 col = QColor(Colors.BAND_LOW if hf < 0.33 else
                              Colors.BAND_MID if hf < 0.66 else Colors.BAND_HIGH)
                 col.setAlpha(180)
-                painter.fillRect(QRectF(xs + 1, dh - bh, bw, bh), QBrush(col))
+                if is_vertical:
+                    painter.fillRect(QRectF(0, h - xs - bw, bh, bw), QBrush(col))
+                else:
+                    painter.fillRect(QRectF(xs + 1, dh - bh, bw, bh), QBrush(col))
 
         if self._mode in ("FFT", "Both"):
-            # Optimization: Downsample points to window width for smoother/faster rendering
-            step = max(1, nb // (int(w) * 2))
-            points = []
+            step = max(1, nb // (int(dw) * 2))
+            pts_max, pts_min = [], []
             for i in range(0, nb, step):
-                frac = max(0, min(1, (mag_filtered[i] - db_min) / (db_max - db_min)))
-                points.append(QPointF(px_x[i], dh * (1.0 - frac)))
+                frac_max = max(0, min(1, (mag_max_filtered[i] - db_min) / (db_max - db_min)))
+                frac_min = max(0, min(1, (mag_min_filtered[i] - db_min) / (db_max - db_min)))
+                if is_vertical:
+                    pts_max.append(QPointF(dh * frac_max, h - px_x[i]))
+                    pts_min.append(QPointF(dh * frac_min, h - px_x[i]))
+                else:
+                    pts_max.append(QPointF(px_x[i], dh * (1.0 - frac_max)))
+                    pts_min.append(QPointF(px_x[i], dh * (1.0 - frac_min)))
             
-            if len(points) >= 2:
+            def create_spline(points):
                 path = QPainterPath()
+                if not points: return path
                 path.moveTo(points[0])
-                
-                # Catmull-Rom spline for smooth curves between points
                 if len(points) >= 4:
-                    # First segment: straight
                     path.lineTo(points[1])
-                    
                     for i in range(1, len(points) - 2):
-                        p0 = points[i - 1]
-                        p1 = points[i]
-                        p2 = points[i + 1]
-                        p3 = points[i + 2]
-                        
-                        # Catmull-Rom to cubic Bezier control points
+                        p0, p1, p2, p3 = points[i - 1], points[i], points[i + 1], points[i + 2]
                         cp1x = p1.x() + (p2.x() - p0.x()) / 6.0
                         cp1y = p1.y() + (p2.y() - p0.y()) / 6.0
                         cp2x = p2.x() - (p3.x() - p1.x()) / 6.0
                         cp2y = p2.y() - (p3.y() - p1.y()) / 6.0
-                        
                         path.cubicTo(cp1x, cp1y, cp2x, cp2y, p2.x(), p2.y())
-                    
-                    # Last segment: straight to final point
                     path.lineTo(points[-1])
                 else:
-                    # Too few points for spline, use lines
-                    for p in points[1:]:
-                        path.lineTo(p)
+                    for p in points[1:]: path.lineTo(p)
+                return path
+
+            if len(pts_max) >= 2:
+                path_max = create_spline(pts_max)
+                path_min = create_spline(pts_min)
                 
-                gc = QColor(Colors.ACCENT); gc.setAlpha(30)
-                painter.setPen(QPen(gc, 3.0)); painter.drawPath(path)
-                painter.setPen(QPen(QColor(Colors.ACCENT), 1.2)); painter.drawPath(path)
-                
-                fp = QPainterPath(path)
-                fp.lineTo(points[-1].x(), dh); fp.lineTo(points[0].x(), dh); fp.closeSubpath()
-                fc = QColor(Colors.ACCENT); fc.setAlpha(15)
-                painter.fillPath(fp, QBrush(fc))
+                if self._channel == "L+R":
+                    # Ribbon fill for Stereo Width
+                    ribbon = QPainterPath(path_max)
+                    ribbon.lineTo(pts_min[-1])
+                    for p in reversed(pts_min[:-1]): ribbon.lineTo(p)
+                    ribbon.closeSubpath()
+                    
+                    # 1. Base fill below the minimum curve (to maintain visual weight)
+                    bg_fill = QPainterPath(path_min)
+                    if is_vertical:
+                        bg_fill.lineTo(0, pts_min[-1].y()); bg_fill.lineTo(0, pts_min[0].y()); bg_fill.closeSubpath()
+                    else:
+                        bg_fill.lineTo(pts_min[-1].x(), dh); bg_fill.lineTo(pts_min[0].x(), dh); bg_fill.closeSubpath()
+                    bc = QColor(Colors.ACCENT); bc.setAlpha(20)
+                    painter.fillPath(bg_fill, QBrush(bc))
+
+                    # 2. Vibrant ribbon fill for the stereo difference
+                    fc = QColor(Colors.ACCENT_PINK); fc.setAlpha(65)
+                    painter.fillPath(ribbon, QBrush(fc))
+                    
+                    # 3. Glow pen for the max curve (matching mono mode's intensity)
+                    gc_glow = QColor(Colors.ACCENT); gc_glow.setAlpha(40)
+                    painter.setPen(QPen(gc_glow, 3.5))
+                    painter.drawPath(path_max)
+                    painter.setPen(QPen(QColor(Colors.ACCENT), 1.5))
+                    painter.drawPath(path_max)
+                else:
+                    # Standard solid mono fill
+                    fp = QPainterPath(path_max)
+                    if is_vertical:
+                        fp.lineTo(0, pts_max[-1].y()); fp.lineTo(0, pts_max[0].y()); fp.closeSubpath()
+                    else:
+                        fp.lineTo(pts_max[-1].x(), dh); fp.lineTo(pts_max[0].x(), dh); fp.closeSubpath()
+                        
+                    fc = QColor(Colors.ACCENT); fc.setAlpha(15)
+                    painter.fillPath(fp, QBrush(fc))
+                    
+                    gc = QColor(Colors.ACCENT); gc.setAlpha(30)
+                    painter.setPen(QPen(gc, 3.0)); painter.drawPath(path_max)
+                    painter.setPen(QPen(QColor(Colors.ACCENT), 1.2)); painter.drawPath(path_max)
 
         if self._show_note and self._smooth_peak_db > -80:
             note = hz_to_note_name(self._smooth_peak_freq)
@@ -336,21 +415,24 @@ class SpectrumModule(BaseModule):
             
             if w > 80:
                 if self._show_floating_note:
-                    # Calculate peak screen position
-                    px = map_frequencies_to_pixels(np.array([self._smooth_peak_freq]), w, self._scale)[0]
+                    px = map_frequencies_to_pixels(np.array([self._smooth_peak_freq]), dw, self._scale)[0]
                     frac = max(0, min(1, (self._smooth_peak_db - db_min) / (db_max - db_min)))
-                    py = dh * (1.0 - frac)
-                    
-                    # Readability: Keep badge inside view boundaries
-                    bx = max(10, min(w - tw - 10, px - tw/2))
-                    by = max(10, min(dh - 30, py - 25))
+                    if is_vertical:
+                        py = h - px
+                        px_screen = dh * frac
+                        bx = max(10, min(w - tw - 10, px_screen - tw/2))
+                        by = max(10, min(h - 30, py - 25))
+                        cx, cy = px_screen, py
+                    else:
+                        py_screen = dh * (1.0 - frac)
+                        bx = max(10, min(w - tw - 10, px - tw/2))
+                        by = max(10, min(dh - 30, py_screen - 25))
+                        cx, cy = px, py_screen
 
-                    # Draw floating badge
                     painter.setFont(self.get_responsive_font(Fonts.value, tw, 22, txt))
                     self.draw_text_badge(painter, QRectF(bx, by, tw, 22), Qt.AlignCenter, txt, QColor(Colors.ACCENT))
                     
-                    # Draw small circle at peak (don't constrain this, it marks the actual bin)
                     painter.setPen(Qt.NoPen); painter.setBrush(QColor(Colors.ACCENT))
-                    painter.drawEllipse(QPointF(px, py), 3, 3)
+                    painter.drawEllipse(QPointF(cx, cy), 3, 3)
                 else:
                     self.draw_text_badge(painter, QRectF(w - tw - 10, 10, tw, 22), Qt.AlignRight, txt, QColor(Colors.ACCENT))

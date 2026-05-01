@@ -48,9 +48,9 @@ class SpectrogramModule(BaseModule):
         cmap = getattr(self, "_colormap", "Theme")
         if cmap == "Black-Blue-Red":
             stops = [
-                (0.0, (0, 0, 0)),
-                (0.5, (0, 0, 255)),
-                (1.0, (255, 0, 0))
+                (0.0, "#000000"),
+                (0.5, "#0000FF"),
+                (1.0, "#FF0000")
             ]
             self._lut = dsp_accel.build_colormap(stops)
         else:
@@ -104,7 +104,12 @@ class SpectrogramModule(BaseModule):
         self._show_freq = settings.get("show_freq", self._show_freq)
         self._speed = float(settings.get("speed", self._speed))
         self._db_floor = float(settings.get("db_floor", self._db_floor))
-        self._colormap = settings.get("colormap", getattr(self, "_colormap", "Theme"))
+        
+        old_cmap = getattr(self, "_colormap", "Theme")
+        self._colormap = settings.get("colormap", old_cmap)
+        if self._colormap != old_cmap:
+            self.on_theme_changed()
+            
         # Re-initialize history if FFT size changed
         self._set_fft(self._fft_size)
 

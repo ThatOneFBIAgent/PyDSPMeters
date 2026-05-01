@@ -1,6 +1,12 @@
 use numpy::{PyArray1, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2, IntoPyArray,
             PyArrayMethods, PyUntypedArrayMethods};
 use pyo3::prelude::*;
+use rustfft::{FftPlanner, num_complex::Complex};
+use std::cell::RefCell;
+
+thread_local! {
+    static PLANNER: RefCell<FftPlanner<f32>> = RefCell::new(FftPlanner::new());
+}
 
 // ── Spectrogram Colormap ────────────────────────────────────────────────────
 
@@ -373,6 +379,49 @@ fn apply_gain_and_concat<'py>(
 }
 
 
+// ── FFT Processing ──────────────────────────────────────────────────────────
+
+/// Compute the magnitude spectrum of audio data.
+/// Returns (magnitude_db)
+#[pyfunction]
+fn compute_fft<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray1<'py, f32>,
+    window: PyReadonlyArray1<'py, f32>,
+    fft_size: usize,
+) -> PyResult<Bound<'py, PyArray1<f32>>> {
+    let input = data.as_array();
+    let win = window.as_array();
+    
+    let n = input.len().min(fft_size).min(win.len());
+    
+    let mut buffer = vec![Complex { re: 0.0, im: 0.0 }; fft_size];
+    for i in 0..n {
+        buffer[i].re = input[i] * win[i];
+    }
+    
+    PLANNER.with(|planner| {
+        let fft = planner.borrow_mut().plan_fft_forward(fft_size);
+        fft.process(&mut buffer);
+    });
+    
+    let out_size = fft_size / 2 + 1;
+    let mut mag_db = vec![0.0f32; out_size];
+    
+    let norm = fft_size as f32 / 2.0;
+    
+    for i in 0..out_size {
+        let mag = (buffer[i].re * buffer[i].re + buffer[i].im * buffer[i].im).sqrt();
+        let mut m = mag / norm;
+        if m < 1e-10 { m = 1e-10; }
+        mag_db[i] = 20.0 * m.log10();
+    }
+    
+    let arr = numpy::ndarray::Array1::from_vec(mag_db);
+    Ok(arr.into_pyarray(py).into())
+}
+
+
 // ── Module Registration ─────────────────────────────────────────────────────
 
 #[pymodule]
@@ -384,5 +433,6 @@ fn dsp_accel(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build_colormap, m)?)?;
     m.add_function(wrap_pyfunction!(correlation, m)?)?;
     m.add_function(wrap_pyfunction!(apply_gain_and_concat, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_fft, m)?)?;
     Ok(())
 }

@@ -199,3 +199,34 @@ def apply_gain_and_concat(blocks, gain):
     if gain != 1.0:
         blocks = [b * gain for b in blocks]
     return np.concatenate(blocks)
+
+
+# ── FFT Processing ──────────────────────────────────────────────────────────
+
+def compute_fft(data, window, fft_size):
+    """Compute the magnitude spectrum of audio data.
+    
+    data: (n_samples,) f32
+    window: (fft_size,) f32
+    fft_size: int
+    Returns: (fft_size // 2 + 1,) f32 magnitude in dB
+    """
+    if _HAS_NATIVE:
+        return _native.compute_fft(
+            data.astype(np.float32), 
+            window.astype(np.float32), 
+            int(fft_size)
+        )
+    
+    # Pure Python fallback
+    n = min(len(data), fft_size)
+    padded = np.zeros(fft_size, dtype=np.float32)
+    padded[:n] = data[:n]
+    windowed = padded * window
+    
+    from scipy.fft import rfft
+    spectrum = rfft(windowed)
+    magnitude = np.abs(spectrum)
+    magnitude = magnitude / (fft_size / 2)
+    magnitude = np.clip(magnitude, 1e-10, None)
+    return 20.0 * np.log10(magnitude)

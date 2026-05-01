@@ -275,7 +275,9 @@ class MainWindow(QMainWindow):
         Fonts.TEXT_SCALE = ui_s.get("text_scale", 1.0)
         initial_theme = ui_s.get("theme", "Midnight")
         apply_theme(initial_theme, ui_s.get("color_overrides", {}))
-        self.setStyleSheet(build_stylesheet())
+        app = QApplication.instance()
+        if app:
+            app.setStyleSheet(build_stylesheet())
         
         self._show_headers = win_s.get("show_headers", True)
         self._auto_hide_ui = win_s.get("auto_hide_ui", False)
@@ -295,6 +297,12 @@ class MainWindow(QMainWindow):
         
         # Modules
         module_items = self._settings.get("modules")
+        
+        # Autosave Timer (every 60 seconds)
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.timeout.connect(self._periodic_save)
+        self._autosave_timer.start(60000)
+        
         if module_items is None:
             module_items = ["oscilloscope", "loudness", "spectrum"]
             
@@ -375,16 +383,6 @@ class MainWindow(QMainWindow):
         from PySide6.QtGui import QIntValidator
         menu = QMenu(self)
         
-        # Unified Menu Styling
-        menu.setStyleSheet(f"""
-            QMenu {{ background: #1a1a2e; border: 1px solid #3a3a6a; color: #d8d8f0; padding: 6px; }}
-            QMenu::item {{ padding: 6px 24px; border-radius: 4px; color: #d8d8f0; }}
-            QMenu::item:selected {{ background: {Colors.ACCENT_DIM}; color: #ffffff; }}
-            QMenu::separator {{ height: 1px; background: #252545; margin: 6px 8px; }}
-            QLabel {{ color: {Colors.TEXT_DIM}; font-size: 8pt; }}
-            QLineEdit {{ background: {Colors.BG_INPUT}; border: 1px solid {Colors.BORDER}; border-radius: 3px; padding: 1px; color: {Colors.TEXT}; }}
-        """)
-
         def add_slider_setting(m, label, min_v, max_v, current_v, callback, is_float=False, step=1):
             action = QWidgetAction(self)
             widget = QWidget()
@@ -503,7 +501,9 @@ class MainWindow(QMainWindow):
     def _update_text_scale(self, scale):
         from app.theme import build_stylesheet
         Fonts.TEXT_SCALE = scale
-        self.setStyleSheet(build_stylesheet())
+        app = QApplication.instance()
+        if app:
+            app.setStyleSheet(build_stylesheet())
         for m in self._modules:
             m.update_theme()
             m.canvas.update()
@@ -793,10 +793,9 @@ class MainWindow(QMainWindow):
     def contextMenuEvent(self, event):
         self._show_gear_menu()
 
-    def closeEvent(self, event):
-        """Handle application exit: Save settings and try clean quit."""
-        # Prepare settings for saving
-        settings = {
+    def _gather_settings(self):
+        """Prepare all current settings in a dictionary for saving."""
+        return {
             "window": {
                 "x": self.pos().x(),
                 "y": self.pos().y(),
@@ -822,6 +821,24 @@ class MainWindow(QMainWindow):
             "modules": [{"key": m.module_key, "config": m.get_settings()} for m in self._modules],
             "splitter_sizes": self.splitter.sizes()
         }
+
+    def _periodic_save(self):
+        """Autosave settings in the background."""
+        if self._is_ready: # Only save once fully loaded
+            # Gathering must happen on the main thread as it accesses UI components
+            settings = self._gather_settings()
+            
+            # Offload the actual disk I/O to a background thread to prevent any UI stutter
+            import threading
+            thread = threading.Thread(target=SettingsManager.save, args=(settings,), daemon=True)
+            thread.start()
+
+    def closeEvent(self, event):
+        """Handle application exit: Save settings and try clean quit."""
+        if hasattr(self, "_autosave_timer") and self._autosave_timer:
+            self._autosave_timer.stop()
+
+        settings = self._gather_settings()
         SettingsManager.save(settings)
 
         self.audio_engine.stop()

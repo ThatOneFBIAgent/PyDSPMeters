@@ -6,10 +6,11 @@ Supports multiple FFT sizes, window functions, and frequency scaling (Mel, Log, 
 import numpy as np
 from scipy.fft import rfft, rfftfreq
 from scipy.signal import get_window
+import app.dsp.accel as accel
 
 
 def compute_fft(data: np.ndarray, fft_size: int = 4096,
-                window: str = "hann") -> tuple[np.ndarray, np.ndarray]:
+                window: str = "hann") -> np.ndarray:
     """
     Compute the magnitude spectrum of audio data.
 
@@ -19,24 +20,10 @@ def compute_fft(data: np.ndarray, fft_size: int = 4096,
         window: Window function name (scipy compatible).
 
     Returns:
-        (frequencies_hz, magnitude_db) arrays.
+        magnitude_db array.
     """
-    n = min(len(data), fft_size)
-    padded = np.zeros(fft_size, dtype=np.float32)
-    padded[:n] = data[:n]
-
     win = get_window(window, fft_size, fftbins=True).astype(np.float32)
-    windowed = padded * win
-
-    spectrum = rfft(windowed)
-    magnitude = np.abs(spectrum)
-
-    # Normalise & convert to dB
-    magnitude = magnitude / (fft_size / 2)
-    magnitude = np.clip(magnitude, 1e-10, None)
-    magnitude_db = 20.0 * np.log10(magnitude)
-
-    return magnitude_db
+    return accel.compute_fft(data, win, fft_size)
 
 
 def fft_frequencies(fft_size: int, sample_rate: float) -> np.ndarray:

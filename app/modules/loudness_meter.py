@@ -22,12 +22,10 @@ class LoudnessModule(BaseModule):
         self._orientation = "Auto"
         self.module_key = "loudness"
         
-        # Visibility Settings
         self._show_momentary = True
         self._show_shortterm = True
         self._show_peak = True
         self._show_all_channels = False
-        self._color_theme = "Classic"
         
         # Values
         ch = audio_engine.channels
@@ -94,16 +92,6 @@ class LoudnessModule(BaseModule):
         chan_act.setCheckable(True)
         chan_act.setChecked(self._show_all_channels)
         chan_act.triggered.connect(lambda checked: setattr(self, "_show_all_channels", checked))
-        
-        # Color Theme
-        ctm = menu.addMenu("Color Theme")
-        ctg = QActionGroup(self)
-        for t in ["Classic", "Multi-Band", "Accent"]:
-            a = ctm.addAction(t)
-            a.setCheckable(True)
-            a.setChecked(self._color_theme == t)
-            a.triggered.connect(lambda checked, theme=t: setattr(self, "_color_theme", theme))
-            ctg.addAction(a)
 
     def _set_mode(self, mode):
         self._mode = mode
@@ -150,8 +138,7 @@ class LoudnessModule(BaseModule):
             "show_momentary": self._show_momentary,
             "show_shortterm": self._show_shortterm,
             "show_peak": self._show_peak,
-            "show_all_channels": self._show_all_channels,
-            "color_theme": self._color_theme
+            "show_all_channels": self._show_all_channels
         }
 
     def apply_settings(self, settings):
@@ -162,7 +149,25 @@ class LoudnessModule(BaseModule):
         self._show_shortterm = settings.get("show_shortterm", self._show_shortterm)
         self._show_peak = settings.get("show_peak", self._show_peak)
         self._show_all_channels = settings.get("show_all_channels", self._show_all_channels)
-        self._color_theme = settings.get("color_theme", self._color_theme)
+
+    def _get_smooth_color(self, val):
+        c_low, c_mid, c_high = QColor(Colors.METER_LOW), QColor(Colors.METER_MID), QColor(Colors.METER_HIGH)
+        if val <= -6:
+            return c_low
+        elif val <= -1:
+            f = (val + 6) / 5.0
+            return QColor(
+                int(c_low.red() + (c_mid.red() - c_low.red()) * f),
+                int(c_low.green() + (c_mid.green() - c_low.green()) * f),
+                int(c_low.blue() + (c_mid.blue() - c_low.blue()) * f)
+            )
+        else:
+            f = min(1.0, (val + 1) / 1.0)
+            return QColor(
+                int(c_mid.red() + (c_high.red() - c_mid.red()) * f),
+                int(c_mid.green() + (c_high.green() - c_mid.green()) * f),
+                int(c_mid.blue() + (c_high.blue() - c_mid.blue()) * f)
+            )
 
     def _render(self, painter, w, h):
         is_vertical = self._orientation == "Vertical"
@@ -212,15 +217,12 @@ class LoudnessModule(BaseModule):
             elif meter_idx == 1: vals, raw = self._disp_st, (self._lufs_st if self._mode == "LUFS" else self._rms_st)
             else:                vals, raw = self._disp_peak, self._peak
             
-            # Determine color based on theme
-            if self._color_theme == "Multi-Band":
-                if meter_idx == 0: pc_base = Colors.BAND_LOW
-                elif meter_idx == 1: pc_base = Colors.BAND_MID
-                else: pc_base = Colors.BAND_HIGH
-            elif self._color_theme == "Accent":
-                pc_base = Colors.ACCENT
-            else:
-                pc_base = None # Use classic signal logic
+            # Create Vertical Gradient
+            grad = QLinearGradient(0, bar_y + bar_h, 0, bar_y)
+            grad.setColorAt(0.0, QColor(Colors.METER_LOW))
+            grad.setColorAt(0.7, QColor(Colors.METER_LOW))
+            grad.setColorAt(0.85, QColor(Colors.METER_MID))
+            grad.setColorAt(1.0, QColor(Colors.METER_HIGH))
 
             # Draw Bars
             if self._show_all_channels:
@@ -231,24 +233,21 @@ class LoudnessModule(BaseModule):
                     painter.fillRect(QRectF(bx, bar_y, bw, bar_h), QColor(Colors.BG_INPUT))
                     f = np.clip((vals[ch] - db_min) / (db_max - db_min), 0, 1)
                     if f > 0:
-                        pc = pc_base or (Colors.RED if raw[ch] > -1 else (Colors.YELLOW if raw[ch] > -6 else Colors.GREEN))
-                        painter.fillRect(QRectF(bx, bar_y + bar_h - f * bar_h, bw, f * bar_h), QColor(pc))
+                        painter.fillRect(QRectF(bx, bar_y + bar_h - f * bar_h, bw, f * bar_h), QBrush(grad))
                 v_max = np.max(raw)
             else:
                 v_avg = np.mean(vals)
                 painter.fillRect(QRectF(gx, bar_y, group_w, bar_h), QColor(Colors.BG_INPUT))
                 f = np.clip((v_avg - db_min) / (db_max - db_min), 0, 1)
                 if f > 0:
-                    v_raw = np.max(raw)
-                    pc = pc_base or (Colors.CLIP_LED if v_raw > -1 else (Colors.PEAK_LED if v_raw > -6 else Colors.METER_LOW))
-                    painter.fillRect(QRectF(gx, bar_y + bar_h - f * bar_h, group_w, f * bar_h), QColor(pc))
+                    painter.fillRect(QRectF(gx, bar_y + bar_h - f * bar_h, group_w, f * bar_h), QBrush(grad))
                 v_max = np.max(raw)
             
             # Value Badge
-            ps_col = pc_base or (Colors.CLIP_LED if v_max > -1 else (Colors.PEAK_LED if v_max > -6 else Colors.METER_LOW))
+            ps_col = self._get_smooth_color(v_max)
             ps = f"{v_max:.0f}" if v_max > -100 else "-∞"
             painter.setFont(self.get_responsive_font(Fonts.value, group_w, val_h, ps))
-            self.draw_text_badge(painter, QRectF(gx, bar_y + bar_h + 2, group_w, val_h), Qt.AlignCenter, ps, QColor(ps_col))
+            self.draw_text_badge(painter, QRectF(gx, bar_y + bar_h + 2, group_w, val_h), Qt.AlignCenter, ps, ps_col)
 
         # Vertical Mode Indicator (Horizontal strip at bottom)
         mode_rect = QRectF(m, h - 14, w - m*2, 10)
@@ -290,6 +289,13 @@ class LoudnessModule(BaseModule):
             elif meter_idx == 1: vals, raw = self._disp_st, (self._lufs_st if self._mode == "LUFS" else self._rms_st)
             else:                vals, raw = self._disp_peak, self._peak
             
+            # Create Horizontal Gradient
+            grad = QLinearGradient(bar_x, 0, bar_x + bar_w, 0)
+            grad.setColorAt(0.0, QColor(Colors.METER_LOW))
+            grad.setColorAt(0.7, QColor(Colors.METER_LOW))
+            grad.setColorAt(0.85, QColor(Colors.METER_MID))
+            grad.setColorAt(1.0, QColor(Colors.METER_HIGH))
+
             # Bars
             if self._show_all_channels:
                 ch_count = self.audio_engine.channels
@@ -299,37 +305,18 @@ class LoudnessModule(BaseModule):
                     painter.fillRect(QRectF(bar_x, by, bar_w, bh), QColor(Colors.BG_INPUT))
                     f = np.clip((vals[ch] - db_min) / (db_max - db_min), 0, 1)
                     if f > 0:
-                        pc = Colors.GREEN
-                        if raw[ch] > -6: pc = Colors.YELLOW
-                        if raw[ch] > -1: pc = Colors.RED
-                        painter.fillRect(QRectF(bar_x, by, f * bar_w, bh), QColor(pc))
+                        painter.fillRect(QRectF(bar_x, by, f * bar_w, bh), QBrush(grad))
                 v_max = np.max(raw)
             else:
                 v_avg = np.mean(vals)
                 painter.fillRect(QRectF(bar_x, ry + 1, bar_w, row_h - 2), QColor(Colors.BG_INPUT))
                 f = np.clip((v_avg - db_min) / (db_max - db_min), 0, 1)
                 if f > 0:
-                    # Color calculation
-                    if self._color_theme == "Multi-Band":
-                        if meter_idx == 0: pc = Colors.BAND_LOW
-                        elif meter_idx == 1: pc = Colors.BAND_MID
-                        else: pc = Colors.BAND_HIGH
-                        painter.fillRect(QRectF(bar_x, ry + 1, f * bar_w, row_h - 2), QColor(pc))
-                    elif self._color_theme == "Accent":
-                        painter.fillRect(QRectF(bar_x, ry + 1, f * bar_w, row_h - 2), QColor(Colors.ACCENT))
-                    else:
-                        v_raw = np.max(raw)
-                        # Gradient for horizontal classic
-                        grad = QLinearGradient(bar_x, 0, bar_x + bar_w, 0)
-                        grad.setColorAt(0.0, QColor(Colors.GREEN))
-                        grad.setColorAt(0.6, QColor(Colors.GREEN))
-                        grad.setColorAt(0.8, QColor(Colors.YELLOW))
-                        grad.setColorAt(0.95, QColor(Colors.RED))
-                        painter.fillRect(QRectF(bar_x, ry + 1, f * bar_w, row_h - 2), QBrush(grad))
+                    painter.fillRect(QRectF(bar_x, ry + 1, f * bar_w, row_h - 2), QBrush(grad))
                 v_max = np.max(raw)
                 
             # Value Badge
-            painter.setFont(self.get_responsive_font(Fonts.value, val_w, row_h, ps))
             ps = f"{v_max:.1f}" if v_max > -100 else "-∞"
-            ps_col = Colors.CLIP_LED if v_max > -1 else (Colors.PEAK_LED if v_max > -6 else Colors.METER_LOW)
-            self.draw_text_badge(painter, QRectF(bar_x + bar_w + 2, ry, val_w, row_h), Qt.AlignVCenter | Qt.AlignRight, ps, QColor(ps_col))
+            painter.setFont(self.get_responsive_font(Fonts.value, val_w, row_h, ps))
+            ps_col = self._get_smooth_color(v_max)
+            self.draw_text_badge(painter, QRectF(bar_x + bar_w + 2, ry, val_w, row_h), Qt.AlignVCenter | Qt.AlignRight, ps, ps_col)
