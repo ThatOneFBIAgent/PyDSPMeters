@@ -138,5 +138,11 @@ We utilize `pytest` for ensuring DSP accuracy and stability:
 python -m pytest
 ```
 
+## 📝 Known Issues
+
+I am aware of an issue with Python 3.14 and SoundDevice where the CFFI wrapper returns NoneType instead of None after not playing anything for a while. This causes the app to soft-crash, as in you can intereact with everything but no matter the audio device you choose, nothing happens.
+
+To fix this the most stable, non hacky approach is to downgrade to an earlier build of python, such as 3.13.x or 3.12.x whilst using the latest Sounddevice install.
+
 ## 📜 License
 Licensed under the [MIT License](LICENSE). Build, modify, and share.
