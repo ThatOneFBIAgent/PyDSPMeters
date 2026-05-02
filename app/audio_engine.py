@@ -85,44 +85,104 @@ class AudioEngine(QObject):
         """Start capturing audio from the given device."""
         self.stop()
         self._device = device_index
-        if channels is not None:
-            self.channels = channels
-            # Recreate buffer if channel count changed
+        old_ch = self.channels
+        
+        # Get device info to validate parameters
+        try:
+            if device_index is None:
+                device_index = sd.default.device[0]
+            
+            info = sd.query_devices(device_index, "input")
+            max_ch = info.get("max_input_channels", 2)
+            dev_sr = info.get("default_samplerate", 44100)
+            
+            if channels is not None:
+                self.channels = min(channels, max_ch, 2)
+            else:
+                self.channels = min(self.channels, max_ch, 2)
+
+            if self.channels != old_ch:
+                buf_len = len(self.buffer)
+                self.buffer = np.zeros((buf_len, self.channels), dtype=np.float32)
+                self._write_pos = 0
+                self._total_written = 0
+                
+            # If our current sample rate is very different from device default, 
+            # and we haven't explicitly set it, maybe try to match?
+            # For now, we'll try our target rate first, then fall back.
+            target_rates = [self.sample_rate, int(dev_sr)]
+            if int(dev_sr) not in target_rates:
+                target_rates.append(int(dev_sr))
+        except Exception as e:
+            self.error_occurred.emit(f"Device query error: {e}")
+            return
+
+        last_err = None
+        for sr in target_rates:
+            try:
+                # Try preferred channels (Mono/Stereo) first
+                self._stream = sd.InputStream(
+                    device=device_index,
+                    channels=self.channels,
+                    samplerate=sr,
+                    blocksize=self.block_size,
+                    dtype="float32",
+                    callback=self._audio_callback,
+                    latency="low",
+                )
+                self._stream.start()
+                self.sample_rate = sr
+                self._poll_timer.start()
+                self.stream_started.emit()
+                return
+            except Exception as e:
+                # Fallback: Some professional drivers (ASIO/MME) REFUSE to open 
+                # unless you request their exact native channel count.
+                # If 2 channels failed, try opening with the device's max_ch.
+                # Our DSP pipeline will automatically truncate this to 2 later.
+                try:
+                    self._stream = sd.InputStream(
+                        device=device_index,
+                        channels=max_ch,
+                        samplerate=sr,
+                        blocksize=self.block_size,
+                        dtype="float32",
+                        callback=self._audio_callback,
+                        latency="low",
+                    )
+                    self._stream.start()
+                    self.sample_rate = sr
+                    self._poll_timer.start()
+                    self.stream_started.emit()
+                    return
+                except:
+                    last_err = e
+                    continue
+
+        # Last resort: Try absolute minimum (Mono) at device sample rate
+        try:
+            self.channels = 1
+            # Recreate buffer
             buf_len = len(self.buffer)
             self.buffer = np.zeros((buf_len, self.channels), dtype=np.float32)
             self._write_pos = 0
             self._total_written = 0
-
-        try:
+            
             self._stream = sd.InputStream(
                 device=device_index,
-                channels=self.channels,
-                samplerate=self.sample_rate,
+                channels=1,
+                samplerate=int(dev_sr),
                 blocksize=self.block_size,
                 dtype="float32",
-                callback=self._audio_callback,
+                callback=self._audio_callback_mono,
                 latency="low",
             )
             self._stream.start()
+            self.sample_rate = int(dev_sr)
             self._poll_timer.start()
             self.stream_started.emit()
-        except Exception as e:
-            # Try mono fallback
-            try:
-                self._stream = sd.InputStream(
-                    device=device_index,
-                    channels=1,
-                    samplerate=self.sample_rate,
-                    blocksize=self.block_size,
-                    dtype="float32",
-                    callback=self._audio_callback_mono,
-                    latency="low",
-                )
-                self._stream.start()
-                self._poll_timer.start()
-                self.stream_started.emit()
-            except Exception as e2:
-                self.error_occurred.emit(f"Audio error: {e2}")
+        except Exception as e2:
+            self.error_occurred.emit(f"Audio error: {last_err or e2}")
 
     def stop(self):
         """Stop the audio stream (non-blocking)."""
@@ -135,7 +195,25 @@ class AudioEngine(QObject):
             except Exception:
                 pass
             self._stream = None
-            self.stream_stopped.emit()
+        self.stream_stopped.emit()
+
+    def get_status_list(self) -> list[str]:
+        """Return a list of status lines for the current stream."""
+        if not self.is_running:
+            return ["Status: Stopped"]
+        try:
+            info = sd.query_devices(self._device, "input")
+            name = info["name"]
+            if len(name) > 35:
+                name = name[:32] + "..."
+            api = sd.query_hostapis(info["hostapi"])["name"]
+            return [
+                f"Device: {name}",
+                f"Driver: {api}",
+                f"Format: {self.sample_rate}Hz, {self.channels}ch"
+            ]
+        except:
+            return ["Status: Active (Unknown Device)"]
 
     @property
     def is_running(self) -> bool:
@@ -182,7 +260,7 @@ class AudioEngine(QObject):
             return
 
         # Accelerated gain application and block concatenation
-        combined = dsp_accel.apply_gain_and_concat(blocks, self._gain_multiplier)
+        combined = dsp_accel.apply_gain_and_concat(blocks, self._gain_multiplier, self.channels)
         n = len(combined)
         buf_len = len(self.buffer)
 

@@ -340,40 +340,40 @@ fn apply_gain_and_concat<'py>(
     py: Python<'py>,
     blocks: Vec<PyReadonlyArray2<'py, f32>>,
     gain: f32,
+    target_channels: usize,
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
     // Calculate total size
     let total_samples: usize = blocks.iter().map(|b| b.shape()[0]).sum();
     if total_samples == 0 || blocks.is_empty() {
-        let empty = numpy::ndarray::Array2::<f32>::zeros((0, 2));
+        let empty = numpy::ndarray::Array2::<f32>::zeros((0, target_channels));
         return Ok(empty.into_pyarray(py).into());
     }
-    let channels = blocks[0].shape()[1];
 
-    let mut result = vec![0.0f32; total_samples * channels];
+    let mut result = vec![0.0f32; total_samples * target_channels];
     let mut offset = 0;
 
     for block in &blocks {
         let arr = block.as_array();
         let n = arr.shape()[0];
-        let ch = arr.shape()[1].min(channels);
+        let ch = arr.shape()[1].min(target_channels);
 
         if gain == 1.0 {
             for i in 0..n {
                 for c in 0..ch {
-                    result[(offset + i) * channels + c] = arr[[i, c]];
+                    result[(offset + i) * target_channels + c] = arr[[i, c]];
                 }
             }
         } else {
             for i in 0..n {
                 for c in 0..ch {
-                    result[(offset + i) * channels + c] = arr[[i, c]] * gain;
+                    result[(offset + i) * target_channels + c] = arr[[i, c]] * gain;
                 }
             }
         }
         offset += n;
     }
 
-    let arr = numpy::ndarray::Array2::from_shape_vec((total_samples, channels), result)
+    let arr = numpy::ndarray::Array2::from_shape_vec((total_samples, target_channels), result)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     Ok(arr.into_pyarray(py).into())
 }

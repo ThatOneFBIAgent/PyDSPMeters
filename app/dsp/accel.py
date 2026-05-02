@@ -181,24 +181,37 @@ def correlation(left, right):
 
 # ── Gain + Concatenation ───────────────────────────────────────────────────
 
-def apply_gain_and_concat(blocks, gain):
+def apply_gain_and_concat(blocks, gain, target_channels=2):
     """Apply gain to audio blocks and concatenate.
     
     blocks: list of (n, channels) f32 arrays
     gain: float multiplier
-    Returns: single (total_n, channels) f32 array
+    target_channels: ensure output has exactly this many channels
+    Returns: single (total_n, target_channels) f32 array
     """
     if _HAS_NATIVE and blocks:
         f32_blocks = [b.astype(np.float32) if b.dtype != np.float32 else b for b in blocks]
-        return _native.apply_gain_and_concat(f32_blocks, float(gain))
+        return _native.apply_gain_and_concat(f32_blocks, float(gain), int(target_channels))
     
     # Pure Python fallback (numpy)
     if not blocks:
-        return np.zeros((0, 2), dtype=np.float32)
+        return np.zeros((0, target_channels), dtype=np.float32)
     
     if gain != 1.0:
         blocks = [b * gain for b in blocks]
-    return np.concatenate(blocks)
+    
+    res = np.concatenate(blocks)
+    if res.shape[1] != target_channels:
+        # Pad or truncate channels to match target
+        actual_ch = res.shape[1]
+        if actual_ch < target_channels:
+            padded = np.zeros((res.shape[0], target_channels), dtype=np.float32)
+            padded[:, :actual_ch] = res
+            return padded
+        else:
+            return res[:, :target_channels]
+            
+    return res
 
 
 # ── FFT Processing ──────────────────────────────────────────────────────────

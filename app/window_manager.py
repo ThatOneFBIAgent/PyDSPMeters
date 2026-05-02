@@ -352,6 +352,7 @@ class MainWindow(QMainWindow):
                     best_index = self._current_device
             
             self._current_device = best_index
+            self.audio_engine.error_occurred.connect(self._on_audio_error)
             self.audio_engine.start(best_index)
             self._is_ready = True
 
@@ -432,6 +433,12 @@ class MainWindow(QMainWindow):
             layout.addWidget(lbl); layout.addWidget(slider); layout.addWidget(val_edit)
             action.setDefaultWidget(widget); m.addAction(action)
 
+        # 0. Current Engine Status
+        for line in self.audio_engine.get_status_list():
+            act = menu.addAction(line)
+            act.setEnabled(False)
+        menu.addSeparator()
+
         # 1. Device Management (Categorized by API)
         dev_menu = menu.addMenu("🎤  Audio Device")
         self._refresh_devices()
@@ -447,8 +454,8 @@ class MainWindow(QMainWindow):
                 api_submenu.addAction(act)
 
         chan_menu = menu.addMenu("🔢  Channels")
-        for c in [1, 2, 4, 6, 8]:
-            act = QAction(f"{c} Channels", self)
+        for c in [1, 2]:
+            act = QAction("Mono" if c == 1 else "Stereo", self)
             act.setCheckable(True); act.setChecked(self.audio_engine.channels == c)
             act.triggered.connect(lambda checked, count=c: self._select_channels(count))
             chan_menu.addAction(act)
@@ -519,6 +526,18 @@ class MainWindow(QMainWindow):
                 m.on_theme_changed()
             m.update_theme() # New helper or manual update
         self._update_ghost_mode()
+
+    def _on_audio_error(self, message):
+        from PySide6.QtWidgets import QMessageBox
+        # Use a non-blocking notification if possible, but for critical capture issues,
+        # a message box is clearer when "nothing is happening".
+        box = QMessageBox(self)
+        box.setWindowTitle("Audio Engine Error")
+        box.setText(message)
+        box.setIcon(QMessageBox.Warning)
+        # Style it slightly to match theme
+        box.setStyleSheet(f"QMessageBox {{ background-color: {Colors.BG_DARK}; color: {Colors.TEXT}; }} QPushButton {{ background: {Colors.BG_HEADER}; color: {Colors.ACCENT}; border: 1px solid {Colors.BORDER}; padding: 4px 12px; }}")
+        box.show()
 
     def _update_ui_styles(self):
         # Title Bar & Buttons
