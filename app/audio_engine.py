@@ -3,6 +3,7 @@ Audio Engine: Captures audio from input devices and distributes it to modules.
 Uses sounddevice for low-latency capture with a thread-safe queue bridge to Qt.
 """
 
+import sys
 import queue
 import numpy as np
 import sounddevice as sd
@@ -50,6 +51,13 @@ class AudioEngine(QObject):
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(16)  # ~60 Hz polling
         self._poll_timer.timeout.connect(self._drain_queue)
+
+        # Python 3.14 SoundDevice Workaround
+        # In 3.14, SoundDevice/CFFI can return NoneType instead of None after silence,
+        # causing a soft-crash. We play silent audio in the background to prevent this.
+        self._is_py314 = sys.version_info.major == 3 and sys.version_info.minor == 14
+        self._silence_counter = 0
+        self._fallback_stream = None
 
     # ── Device Enumeration ──────────────────────────────────────────────────
 
@@ -195,6 +203,17 @@ class AudioEngine(QObject):
             except Exception:
                 pass
             self._stream = None
+
+        # Clean up fallback stream if active
+        if self._fallback_stream is not None:
+            try:
+                self._fallback_stream.abort()
+                self._fallback_stream.close()
+            except:
+                pass
+            self._fallback_stream = None
+        self._silence_counter = 0
+
         self.stream_stopped.emit()
 
     def get_status_list(self) -> list[str]:
@@ -257,11 +276,21 @@ class AudioEngine(QObject):
                 break
 
         if not blocks:
+            if self._is_py314:
+                # On 3.14, if we get no blocks, we treat it as potential silence
+                # to trigger the keep-alive output stream if it lasts too long.
+                self._handle_silence_fallback(is_silent=True, frames=self.block_size)
             return
 
         # Accelerated gain application and block concatenation
         combined = dsp_accel.apply_gain_and_concat(blocks, self._gain_multiplier, self.channels)
         n = len(combined)
+
+        # Python 3.14 Workaround: Monitor for silence
+        if self._is_py314:
+            # Check if the combined block is effectively silent (RMS-ish)
+            is_silent = np.max(np.abs(combined)) < 1e-5
+            self._handle_silence_fallback(is_silent, n)
         buf_len = len(self.buffer)
 
         # Update circular history buffer
@@ -304,3 +333,36 @@ class AudioEngine(QObject):
                 self.buffer[-(available - end):],
                 self.buffer[:end],
             ])
+
+    # ── Python 3.14 Workaround Helpers ─────────────────────────────────────
+
+    def _handle_silence_fallback(self, is_silent: bool, frames: int):
+        """
+        Maintains a silent output stream on Python 3.14 to prevent SoundDevice
+        from hitting a CFFI bug that causes soft-crashes after long silence.
+        """
+        if is_silent:
+            self._silence_counter += frames
+            # If silent for more than 1.5 seconds, ensure fallback is running
+            if self._silence_counter > int(self.sample_rate * 1.5):
+                if self._fallback_stream is None:
+                    try:
+                        # Start a dummy output stream. This keeps the PortAudio
+                        # backend active and prevents the 3.14 NoneType crash.
+                        self._fallback_stream = sd.OutputStream(
+                            samplerate=int(self.sample_rate),
+                            channels=1,
+                            callback=lambda outdata, f, t, s: outdata.fill(0)
+                        )
+                        self._fallback_stream.start()
+                    except:
+                        pass
+        else:
+            self._silence_counter = 0
+            if self._fallback_stream is not None:
+                try:
+                    self._fallback_stream.abort()
+                    self._fallback_stream.close()
+                except:
+                    pass
+                self._fallback_stream = None
