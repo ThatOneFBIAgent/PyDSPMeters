@@ -497,7 +497,6 @@ class MainWindow(QMainWindow):
         menu.addAction("Auto-Hide Title Bar", self._toggle_ghost_mode).setCheckable(True)
         menu.actions()[-1].setChecked(self._auto_hide_ui)
         
-        # Appbar submenu
         appbar_menu = menu.addMenu("📌  Dock as App Bar")
         toggle_act = appbar_menu.addAction("Enable App Bar")
         toggle_act.setCheckable(True)
@@ -682,7 +681,32 @@ class MainWindow(QMainWindow):
             self._apply_appbar()
 
     def _apply_appbar(self):
-        """Dock the window to the chosen screen edge using Win32 SHAppBarMessage."""
+        """Dock the window to the chosen screen edge."""
+        import sys
+        
+        screen = QApplication.primaryScreen()
+        if not screen: return
+        sg = screen.geometry()
+        thickness = self.width() if self._appbar_edge in ("left", "right") else self.height()
+        
+        if self._appbar_edge == "left":
+            target_rect = QRect(sg.left(), sg.top(), thickness, sg.height())
+        elif self._appbar_edge == "right":
+            target_rect = QRect(sg.right() - thickness + 1, sg.top(), thickness, sg.height())
+        elif self._appbar_edge == "top":
+            target_rect = QRect(sg.left(), sg.top(), sg.width(), thickness)
+        else:
+            target_rect = QRect(sg.left(), sg.bottom() - thickness + 1, sg.width(), thickness)
+            
+        if sys.platform == "win32":
+            self._apply_appbar_win32(thickness, sg)
+        else:
+            self.setGeometry(target_rect)
+            if sys.platform == "linux":
+                # Ensure xprop runs AFTER setGeometry so the window is mapped
+                QTimer.singleShot(100, lambda: self._apply_appbar_linux(target_rect))
+
+    def _apply_appbar_win32(self, thickness, sg):
         try:
             import ctypes
             import ctypes.wintypes as wt
@@ -697,10 +721,6 @@ class MainWindow(QMainWindow):
                     ("uEdge", wt.UINT), ("rc", wt.RECT), ("lParam", ctypes.c_long),
                 ]
 
-            screen = QApplication.primaryScreen()
-            if not screen: return
-            sg = screen.geometry()
-
             edge_map = {"left": ABE_LEFT, "top": ABE_TOP, "right": ABE_RIGHT, "bottom": ABE_BOTTOM}
             uEdge = edge_map.get(self._appbar_edge, ABE_RIGHT)
 
@@ -710,9 +730,6 @@ class MainWindow(QMainWindow):
             abd.hWnd = hwnd
             abd.uEdge = uEdge
 
-            # Determine desired size based on edge
-            thickness = self.width() if self._appbar_edge in ("left", "right") else self.height()
-            
             if uEdge == ABE_LEFT:
                 abd.rc = wt.RECT(sg.left(), sg.top(), sg.left() + thickness, sg.bottom())
             elif uEdge == ABE_RIGHT:
@@ -726,15 +743,45 @@ class MainWindow(QMainWindow):
             shell32.SHAppBarMessage(ABM_NEW, ctypes.byref(abd))
             shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(abd))
 
-            # Apply the position the system gave back
             self.setGeometry(abd.rc.left, abd.rc.top,
                              abd.rc.right - abd.rc.left, abd.rc.bottom - abd.rc.top)
         except Exception as e:
-            print(f"[AppBar] Failed to dock: {e}")
+            print(f"[AppBar] Failed to dock (Win32): {e}")
             self._appbar_active = False
+
+    def _apply_appbar_linux(self, rect):
+        import subprocess
+        try:
+            hwnd = str(int(self.winId()))
+            l, r, t, b = 0, 0, 0, 0
+            lsy, ley, rsy, rey, tsx, tex, bsx, bex = 0, 0, 0, 0, 0, 0, 0, 0
+            
+            if self._appbar_edge == "left":
+                l = rect.width(); lsy = rect.top(); ley = rect.bottom()
+            elif self._appbar_edge == "right":
+                r = rect.width(); rsy = rect.top(); rey = rect.bottom()
+            elif self._appbar_edge == "top":
+                t = rect.height(); tsx = rect.left(); tex = rect.right()
+            elif self._appbar_edge == "bottom":
+                b = rect.height(); bsx = rect.left(); bex = rect.right()
+
+            strut = f"{l}, {r}, {t}, {b}"
+            strut_partial = f"{l}, {r}, {t}, {b}, {lsy}, {ley}, {rsy}, {rey}, {tsx}, {tex}, {bsx}, {bex}"
+            
+            subprocess.run(["xprop", "-id", hwnd, "-f", "_NET_WM_STRUT", "32c", "-set", "_NET_WM_STRUT", strut], capture_output=True)
+            subprocess.run(["xprop", "-id", hwnd, "-f", "_NET_WM_STRUT_PARTIAL", "32c", "-set", "_NET_WM_STRUT_PARTIAL", strut_partial], capture_output=True)
+        except Exception as e:
+            print(f"[AppBar] Linux xprop failed: {e}")
 
     def _release_appbar(self):
         """Release the appbar reservation."""
+        import sys
+        if sys.platform == "win32":
+            self._release_appbar_win32()
+        elif sys.platform == "linux":
+            self._release_appbar_linux()
+
+    def _release_appbar_win32(self):
         try:
             import ctypes
             import ctypes.wintypes as wt
@@ -752,7 +799,16 @@ class MainWindow(QMainWindow):
             abd.hWnd = int(self.winId())
             ctypes.windll.shell32.SHAppBarMessage(ABM_REMOVE, ctypes.byref(abd))
         except Exception as e:
-            print(f"[AppBar] Failed to release: {e}")
+            print(f"[AppBar] Failed to release (Win32): {e}")
+
+    def _release_appbar_linux(self):
+        import subprocess
+        try:
+            hwnd = str(int(self.winId()))
+            subprocess.run(["xprop", "-id", hwnd, "-remove", "_NET_WM_STRUT"], capture_output=True)
+            subprocess.run(["xprop", "-id", hwnd, "-remove", "_NET_WM_STRUT_PARTIAL"], capture_output=True)
+        except Exception as e:
+            print(f"[AppBar] Failed to release (Linux): {e}")
 
     # ── Module Management ───────────────────────────────────────────────────
 

@@ -6,7 +6,7 @@
 [![PySide6](https://img.shields.io/badge/UI-PySide6-brightgreen.svg)](https://pyside.org)
 [![Performance](https://img.shields.io/badge/DSP-NumPy-orange.svg)](https://numpy.org)
 
-PyDSPMeters is a modular, ultra-responsive audio monitoring suite designed to rival professional desktop solutions. It provides a flexible, always-on-top interface for engineers, producers, and audiophiles who need critical signal feedback without sacrificing screen real estate.
+PyDSPMeters is a modular, ultra-responsive audio monitoring suite designed to rival professional desktop solutions. It provides a flexible, always-on-top interface for engineers, producers, and audiophiles who need critical signal feedback without sacrificing screen real estate, both in Windows (10 and 11) and Linux (Gnome/KDE/etc.✝).
 
 ---
 
@@ -15,12 +15,12 @@ PyDSPMeters is a modular, ultra-responsive audio monitoring suite designed to ri
 Built from the ground up to handle high-resolution displays and high-density audio streams, PyDSPMeters utilizes a optimized processing pipeline:
 
 *   **Zero-Copy DSP**: Leveraging NumPy's vectorized operations for lightning-fast FFT calculations and signal analysis.
-*   **Rust PyO3 Native Acceleration**✝: Performance critical hot-paths (bulk array modifications, circular buffers, column interpolations) are processed via a zero-copy compiled Rust module (`dsp_accel`), allowing the app to hit locked 60 FPS while keeping CPU usage low.
+*   **Rust PyO3 Native Acceleration**✝✝: Performance critical hot-paths (bulk array modifications, circular buffers, column interpolations) are processed via a zero-copy compiled Rust module (`dsp_accel`), allowing the app to hit locked 60 FPS while keeping CPU usage low.
 *   **Circular Buffer Rendering**: Advanced `QImage` caching for modules like the Spectrogram ensures smooth scrolling even at 4K/8K resolutions.
 *   **Low-Latency Hooking**: Direct interface with system audio drivers via PyAudio with minimal buffer overhead.
 *   **Adaptive UI**: Dynamic text scaling and intelligent layout distribution that keeps meters readable from 60px to full-screen.
 
-✝: Requires Rust toolchain and PyO3 installed, see Rust Acceleration section below for more info. 
+✝✝: Requires Rust toolchain and PyO3 installed, see Rust Acceleration section below for more info. 
 
 ---
 
@@ -148,6 +148,8 @@ I am aware of an issue with Python 3.14 and SoundDevice where the CFFI wrapper r
 To fix this the most stable, non hacky approach is to downgrade to an earlier build of python, such as 3.13.x or 3.12.x whilst using the latest Sounddevice install.
 
 Fixes are available, but modifying sounddevice.py is at your own expense.
+
+✝: Unfortunately I cannot test the linux build myself, if it does not work, please feel free to submit a PR/Open an issue on the github page.
 
 ## 📜 License
 Licensed under the [MIT License](LICENSE). Build, modify, and share.

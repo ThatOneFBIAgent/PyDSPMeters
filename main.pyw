@@ -5,10 +5,19 @@ Modular real-time audio visualization utility.
 
 from PySide6.QtWidgets import QApplication, QSplashScreen, QLabel
 from PySide6.QtCore import Qt, QTimer, QRectF, QPoint
-from PySide6.QtGui import QPainter, QColor, QLinearGradient, QFont, QPen
+from PySide6.QtGui import QPainter, QColor, QLinearGradient, QFont, QPen, QIcon
+import sys
+import os
+import ctypes
+import glob
 
 from app.theme import build_stylesheet, Colors, Fonts, apply_theme
 
+# --- Application Configuration ---
+# Set this to the name of your icon file. It will survive Nuitka packaging.
+# If left empty, the app will automatically try to find a .ico in its directory.
+APP_ICON_NAME = "icon.ico" 
+# ---------------------------------
 
 class CustomSplashScreen(QSplashScreen):
     """Splash screen with branding and progress."""
@@ -111,6 +120,31 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("PyDSPMeters")
+    
+    # Override default Python taskbar icon if a .ico is found or in settings
+    if sys.platform == "win32":
+        try:
+            myappid = 'pydspmeters.app.1.0'
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception:
+            pass
+            
+    # Try to load icon robustly (survives Nuitka packaging)
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    icon_path = ""
+    
+    if APP_ICON_NAME:
+        target_path = os.path.join(base_dir, APP_ICON_NAME)
+        if os.path.exists(target_path):
+            icon_path = target_path
+            
+    if not icon_path:
+        icos = glob.glob(os.path.join(base_dir, "*.ico"))
+        if icos:
+            icon_path = icos[0]
+            
+    if icon_path and os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
     
     # Initialize theme
     apply_theme("Midnight")
