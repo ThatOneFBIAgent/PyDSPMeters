@@ -25,6 +25,7 @@ class WaveformModule(BaseModule):
         self._rms_buf = np.zeros((self._buf_len, audio_engine.channels), dtype=np.float32)
         self._write_pos = 0
         self._display_mode = "Dual" if audio_engine.channels >= 2 else "Overlay"
+        self._orientation = "Horizontal"
         self.module_key = "waveform"
         super().__init__(audio_engine, title="Waveform", parent=parent)
         self.canvas.set_render_func(self._render)
@@ -33,13 +34,15 @@ class WaveformModule(BaseModule):
         return {
             "channel": self._channel,
             "speed": self._speed,
-            "display_mode": self._display_mode
+            "display_mode": self._display_mode,
+            "orientation": getattr(self, "_orientation", "Horizontal")
         }
 
     def apply_settings(self, settings):
         self._channel = settings.get("channel", self._channel)
         self._speed = float(settings.get("speed", self._speed))
         self._display_mode = settings.get("display_mode", self._display_mode)
+        self._orientation = settings.get("orientation", getattr(self, "_orientation", "Horizontal"))
 
     def build_context_menu(self, menu):
         from PySide6.QtGui import QActionGroup
@@ -56,6 +59,15 @@ class WaveformModule(BaseModule):
             a.setChecked(c == self._channel)
             a.triggered.connect(lambda checked, ch=c: setattr(self, "_channel", ch))
             cg.addAction(a)
+            
+        om = menu.addMenu("Orientation")
+        og = QActionGroup(self)
+        for o in ["Auto", "Horizontal", "Vertical"]:
+            a = om.addAction(o)
+            a.setCheckable(True)
+            a.setChecked(o == getattr(self, "_orientation", "Horizontal"))
+            a.triggered.connect(lambda checked, v=o: setattr(self, "_orientation", v))
+            og.addAction(a)
             
         sm = menu.addMenu("Speed")
         sg = QActionGroup(self)
@@ -100,7 +112,11 @@ class WaveformModule(BaseModule):
             self._write_pos = (self._write_pos + 1) % self._buf_len
 
     def _render(self, painter, w, h):
-        n_disp = int(w)
+        is_vert = self._orientation == "Vertical"
+        if self._orientation == "Auto":
+            is_vert = h > w * 1.2
+
+        n_disp = int(h if is_vert else w)
         if n_disp > self._buf_len: n_disp = self._buf_len
         
         start = (self._write_pos - n_disp) % self._buf_len
@@ -122,17 +138,16 @@ class WaveformModule(BaseModule):
             try: channels = [int(self._channel.split()[1]) - 1]
             except: channels = [0]
         elif self._channel == "Mid": 
-            # Recalculate mid for display from stored L/R
             maxs = (max_all[:, 0] + max_all[:, 1]) * 0.5
             mins = (min_all[:, 0] + min_all[:, 1]) * 0.5
             rmss = (rms_all[:, 0] + rms_all[:, 1]) * 0.5
-            self._draw_wave(painter, maxs, mins, rmss, Colors.ACCENT, h / 2, h, "both")
+            self._draw_wave(painter, maxs, mins, rmss, Colors.ACCENT, (w/2 if is_vert else h/2), (w if is_vert else h), "both", is_vert)
             return
         elif self._channel == "Side":
             maxs = (max_all[:, 0] - max_all[:, 1]) * 0.5
             mins = (min_all[:, 0] - min_all[:, 1]) * 0.5
             rmss = np.abs(rms_all[:, 0] - rms_all[:, 1]) * 0.5
-            self._draw_wave(painter, maxs, mins, rmss, Colors.ACCENT_PURPLE, h / 2, h, "both")
+            self._draw_wave(painter, maxs, mins, rmss, Colors.ACCENT_PURPLE, (w/2 if is_vert else h/2), (w if is_vert else h), "both", is_vert)
             return
         else: # L+R or All
             channels = list(range(self.audio_engine.channels))
@@ -141,76 +156,78 @@ class WaveformModule(BaseModule):
         
         if self._display_mode == "Dual" and len(channels) > 1:
             n_ch = len(channels)
-            strip_h = h / n_ch
+            strip_dim = (w if is_vert else h) / n_ch
             for i, idx in enumerate(channels):
-                cy = (i + 0.5) * strip_h
-                # Draw divider
+                center = (i + 0.5) * strip_dim
                 if i > 0:
                     painter.setPen(QPen(QColor(Colors.GRID), 1))
-                    painter.drawLine(0, int(i * strip_h), w, int(i * strip_h))
+                    if is_vert: painter.drawLine(int(i * strip_dim), 0, int(i * strip_dim), h)
+                    else: painter.drawLine(0, int(i * strip_dim), w, int(i * strip_dim))
                 
                 if idx < len(max_all[0]):
-                    self._draw_wave(painter, max_all[:, idx], min_all[:, idx], rms_all[:, idx], colors[idx % len(colors)], cy, strip_h, "both")
+                    self._draw_wave(painter, max_all[:, idx], min_all[:, idx], rms_all[:, idx], colors[idx % len(colors)], center, strip_dim, "both", is_vert)
         elif self._display_mode == "Split" and len(channels) > 1:
-            mid_y = h / 2
+            mid_dim = (w if is_vert else h) / 2
             painter.setPen(QPen(QColor(Colors.GRID), 1))
-            painter.drawLine(0, int(mid_y), w, int(mid_y))
+            if is_vert: painter.drawLine(int(mid_dim), 0, int(mid_dim), h)
+            else: painter.drawLine(0, int(mid_dim), w, int(mid_dim))
             c0, c1 = channels[0], channels[1]
             if c0 < len(max_all[0]):
-                self._draw_wave(painter, max_all[:, c0], min_all[:, c0], rms_all[:, c0], colors[c0 % len(colors)], mid_y, h, "top")
+                self._draw_wave(painter, max_all[:, c0], min_all[:, c0], rms_all[:, c0], colors[c0 % len(colors)], mid_dim, (w if is_vert else h), "top", is_vert)
             if c1 < len(max_all[0]):
-                self._draw_wave(painter, max_all[:, c1], min_all[:, c1], rms_all[:, c1], colors[c1 % len(colors)], mid_y, h, "bottom")
+                self._draw_wave(painter, max_all[:, c1], min_all[:, c1], rms_all[:, c1], colors[c1 % len(colors)], mid_dim, (w if is_vert else h), "bottom", is_vert)
         else:
-            mid_y = h / 2
+            mid_dim = (w if is_vert else h) / 2
             painter.setPen(QPen(QColor(Colors.GRID), 1))
-            painter.drawLine(0, int(mid_y), w, int(mid_y))
+            if is_vert: painter.drawLine(int(mid_dim), 0, int(mid_dim), h)
+            else: painter.drawLine(0, int(mid_dim), w, int(mid_dim))
             for idx in channels:
                 if idx < len(max_all[0]):
-                    self._draw_wave(painter, max_all[:, idx], min_all[:, idx], rms_all[:, idx], colors[idx % len(colors)], mid_y, h, "both")
+                    self._draw_wave(painter, max_all[:, idx], min_all[:, idx], rms_all[:, idx], colors[idx % len(colors)], mid_dim, (w if is_vert else h), "both", is_vert)
 
-    def _draw_wave(self, painter, maxs, mins, rmss, base_color, mid_y, h, side="both"):
+    def _draw_wave(self, painter, maxs, mins, rmss, base_color, center, dim, side="both", vertical=False):
         from PySide6.QtCore import QLineF
-        h_factor = h * 0.45
+        h_factor = dim * 0.45
         
-        # Optimized drawing: Group lines by color to minimize pen changes
         base_lines = []
         yellow_lines = []
         red_lines = []
         peak_lines = []
         
-        for x in range(len(maxs)):
-            # RMS Core coloring based on amplitude
-            rms_val = rmss[x] * 2.0 # Standardized scale
-            h_rms = rmss[x] * h_factor
+        for t in range(len(maxs)):
+            rms_val = rmss[t] * 2.0
+            h_rms = rmss[t] * h_factor
             
             if side == "both":
-                yt, yb = mid_y - h_rms, mid_y + h_rms
-                pt, pb = mid_y - maxs[x] * h_factor, mid_y - mins[x] * h_factor
-            elif side == "top":
-                yt, yb = mid_y - h_rms - 1.0, mid_y - 1.0
-                pt, pb = mid_y - maxs[x] * h_factor - 1.0, mid_y - 1.0
-            else: # bottom
-                yt, yb = mid_y + 1.0, mid_y + h_rms + 1.0
-                pt, pb = mid_y + 1.0, mid_y - mins[x] * h_factor + 1.0
+                vt, vb = center - h_rms, center + h_rms
+                pt, pb = center - maxs[t] * h_factor, center - mins[t] * h_factor
+            elif side == "top": # or "left" in vertical
+                vt, vb = center - h_rms - 1.0, center - 1.0
+                pt, pb = center - maxs[t] * h_factor - 1.0, center - 1.0
+            else: # bottom or "right" in vertical
+                vt, vb = center + 1.0, center + h_rms + 1.0
+                pt, pb = center + 1.0, center - mins[t] * h_factor + 1.0
             
-            line = QLineF(x, yt, x, yb)
-            if rms_val > 0.7: 
-                red_lines.append(line)
-            elif rms_val > 0.3: 
-                yellow_lines.append(line)
-            else: 
-                base_lines.append(line)
-            
-            # Peak outline (using base_color)
-            peak_lines.append(QLineF(x, pt, x, pb))
+            if vertical:
+                y = t
+                line = QLineF(vt, y, vb, y)
+                peak_line = QLineF(pt, y, pb, y)
+            else:
+                x = t
+                line = QLineF(x, vt, x, vb)
+                peak_line = QLineF(x, pt, x, pb)
 
-        # 1. Draw Peaks (translucent background)
-        pc = QColor(base_color)
-        pc.setAlpha(35)
+            if rms_val > 0.7: red_lines.append(line)
+            elif rms_val > 0.3: yellow_lines.append(line)
+            else: base_lines.append(line)
+            peak_lines.append(peak_line)
+
+        # 1. Draw Peaks
+        pc = QColor(base_color); pc.setAlpha(35)
         painter.setPen(QPen(pc, 1))
         painter.drawLines(peak_lines)
         
-        # 2. Draw RMS Cores with theme-aware meter colors
+        # 2. Draw RMS Cores
         if base_lines:
             painter.setPen(QPen(QColor(Colors.METER_LOW), 1))
             painter.drawLines(base_lines)

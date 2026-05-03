@@ -15,10 +15,12 @@ PyDSPMeters is a modular, ultra-responsive audio monitoring suite designed to ri
 Built from the ground up to handle high-resolution displays and high-density audio streams, PyDSPMeters utilizes a optimized processing pipeline:
 
 *   **Zero-Copy DSP**: Leveraging NumPy's vectorized operations for lightning-fast FFT calculations and signal analysis.
-*   **Rust PyO3 Native Acceleration**: Performance critical hot-paths (bulk array modifications, circular buffers, column interpolations) are processed via a zero-copy compiled Rust module (`dsp_accel`), allowing the app to hit locked 60 FPS while keeping CPU usage low.
+*   **Rust PyO3 Native Acceleration**✝: Performance critical hot-paths (bulk array modifications, circular buffers, column interpolations) are processed via a zero-copy compiled Rust module (`dsp_accel`), allowing the app to hit locked 60 FPS while keeping CPU usage low.
 *   **Circular Buffer Rendering**: Advanced `QImage` caching for modules like the Spectrogram ensures smooth scrolling even at 4K/8K resolutions.
 *   **Low-Latency Hooking**: Direct interface with system audio drivers via PyAudio with minimal buffer overhead.
 *   **Adaptive UI**: Dynamic text scaling and intelligent layout distribution that keeps meters readable from 60px to full-screen.
+
+✝: Requires Rust toolchain and PyO3 installed, see Rust Acceleration section below for more info. 
 
 ---
 
@@ -30,6 +32,7 @@ PyDSPMeters adapts to *your* workflow, not the other way around.
 *   **Omni-Layout**: Seamlessly toggle between **Vertical** and **Horizontal** modes. Fit the meters into a side-bar, a bottom-strip, or a dedicated second monitor.
 *   **Ghost Mode**: Transparent and Glass presets combined with an auto-hiding title bar allow the meters to "float" over your DAW or editor.
 *   **Edge Snapping**: Intelligent window management that locks to screen edges for a pixel-perfect setup.
+*   **AppBar Functionality**: (via Ctypes), which enables PyDSPMeters to integrate with other applications by reserving space for itself, making for a hassle-free docking experience. (Windows-only for now)
 
 ![1](demos/1.png)
 ![2](demos/2.png)
@@ -59,14 +62,14 @@ PyDSPMeters adapts to *your* workflow, not the other way around.
 
 ## 🎨 Theme Engine
 
-Express your aesthetic with a wide range of built-in presets:
+Express your aesthetic with a wide range of built-in presets such as:
 
 *   **Midnight**: Deep studio dark with vibrant cyan accents.
 *   **Modern Light**: Clean, professional light theme with indigo/blue meters.
 *   **Abyss**: Pure black OLED-ready interface.
 *   **Transparent Ghost**: Borderless, floating UI for minimal distraction.
 *   **Aurora, Crimson, Solar**: High-contrast, color-focused palettes for visibility.
-
+*   **And so on!** You can also create your own themes by modifying the `THEME_PRESETS` dictionary in `app/theme.py`.
 ---
 
 ## 📦 Getting Started
@@ -127,7 +130,7 @@ pip install target/wheels/dsp_accel-*.whl --force-reinstall
 *   **⚙ Gear Icon**: Global configuration (Device selection, Themes, Input Gain, Label Scaling).
 *   **+ Plus Icon**: Instantly append new modules to the current layout.
 *   **▥/▤ Layout Icon**: Switch between vertical stacking and horizontal strips.
-*   **Portability**: PyDSPMeters is fully portable; all configurations are stored in `settings.json` within the root directory.
+*   **Portability**: PyDSPMeters is fully portable; all configurations are stored in `settings.json` within the roaming application data folder.
 
 ---
 
@@ -143,6 +146,8 @@ python -m pytest
 I am aware of an issue with Python 3.14 and SoundDevice where the CFFI wrapper returns NoneType instead of None after not playing anything for a while. This causes the app to soft-crash, as in you can intereact with everything but no matter the audio device you choose, nothing happens.
 
 To fix this the most stable, non hacky approach is to downgrade to an earlier build of python, such as 3.13.x or 3.12.x whilst using the latest Sounddevice install.
+
+Fixes are available, but modifying sounddevice.py is at your own expense.
 
 ## 📜 License
 Licensed under the [MIT License](LICENSE). Build, modify, and share.

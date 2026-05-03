@@ -216,6 +216,8 @@ class MainWindow(QMainWindow):
         self.resize(300, 650)
         self._loading_settings = True
         self._is_ready = False # Track if fully initialized
+        self._appbar_active = False
+        self._appbar_edge = "right" # Which edge to dock to
         
         # Loading Overlay (Internal window fade-in)
         self._loading_overlay = LoadingOverlay(self)
@@ -281,6 +283,8 @@ class MainWindow(QMainWindow):
         
         self._show_headers = win_s.get("show_headers", True)
         self._auto_hide_ui = win_s.get("auto_hide_ui", False)
+        self._appbar_edge = win_s.get("appbar_edge", "right")
+        self._appbar_saved = win_s.get("appbar_active", False)
         self._update_ghost_mode()
         
         # Divider settings (must be after apply_theme to use correct BORDER color)
@@ -332,6 +336,11 @@ class MainWindow(QMainWindow):
             
             if hasattr(self, "_loading_overlay") and self._loading_overlay:
                 self._loading_overlay.fade_out()
+            
+            # Restore appbar after window is fully laid out
+            if getattr(self, "_appbar_saved", False):
+                self._appbar_active = True
+                QTimer.singleShot(300, self._apply_appbar)
                     
         QTimer.singleShot(250, finalize_load)
 
@@ -488,6 +497,22 @@ class MainWindow(QMainWindow):
         menu.addAction("Auto-Hide Title Bar", self._toggle_ghost_mode).setCheckable(True)
         menu.actions()[-1].setChecked(self._auto_hide_ui)
         
+        # Appbar submenu
+        appbar_menu = menu.addMenu("📌  Dock as App Bar")
+        toggle_act = appbar_menu.addAction("Enable App Bar")
+        toggle_act.setCheckable(True)
+        toggle_act.setChecked(self._appbar_active)
+        toggle_act.triggered.connect(self._toggle_appbar)
+        
+        appbar_menu.addSeparator()
+        edge_group = QActionGroup(self)
+        for edge in ["left", "right", "top", "bottom"]:
+            a = appbar_menu.addAction(edge.capitalize())
+            a.setCheckable(True)
+            a.setChecked(edge == self._appbar_edge)
+            a.triggered.connect(lambda checked, e=edge: self._set_appbar_edge(e))
+            edge_group.addAction(a)
+        
         menu.addSeparator()
 
         # 4. Unified Divider Settings
@@ -640,6 +665,94 @@ class MainWindow(QMainWindow):
     def leaveEvent(self, event):
         self._update_ghost_mode()
         super().leaveEvent(event)
+
+    # ── App Bar ──────────────────────────────────────────────────────────────
+
+    def _toggle_appbar(self, checked):
+        self._appbar_active = checked
+        if checked:
+            self._apply_appbar()
+        else:
+            self._release_appbar()
+
+    def _set_appbar_edge(self, edge):
+        self._appbar_edge = edge
+        if self._appbar_active:
+            self._release_appbar()
+            self._apply_appbar()
+
+    def _apply_appbar(self):
+        """Dock the window to the chosen screen edge using Win32 SHAppBarMessage."""
+        try:
+            import ctypes
+            import ctypes.wintypes as wt
+
+            ABM_NEW = 0x00000000
+            ABM_SETPOS = 0x00000003
+            ABE_LEFT, ABE_TOP, ABE_RIGHT, ABE_BOTTOM = 0, 1, 2, 3
+
+            class APPBARDATA(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wt.DWORD), ("hWnd", wt.HWND), ("uCallbackMessage", wt.UINT),
+                    ("uEdge", wt.UINT), ("rc", wt.RECT), ("lParam", ctypes.c_long),
+                ]
+
+            screen = QApplication.primaryScreen()
+            if not screen: return
+            sg = screen.geometry()
+
+            edge_map = {"left": ABE_LEFT, "top": ABE_TOP, "right": ABE_RIGHT, "bottom": ABE_BOTTOM}
+            uEdge = edge_map.get(self._appbar_edge, ABE_RIGHT)
+
+            hwnd = int(self.winId())
+            abd = APPBARDATA()
+            abd.cbSize = ctypes.sizeof(APPBARDATA)
+            abd.hWnd = hwnd
+            abd.uEdge = uEdge
+
+            # Determine desired size based on edge
+            thickness = self.width() if self._appbar_edge in ("left", "right") else self.height()
+            
+            if uEdge == ABE_LEFT:
+                abd.rc = wt.RECT(sg.left(), sg.top(), sg.left() + thickness, sg.bottom())
+            elif uEdge == ABE_RIGHT:
+                abd.rc = wt.RECT(sg.right() - thickness, sg.top(), sg.right(), sg.bottom())
+            elif uEdge == ABE_TOP:
+                abd.rc = wt.RECT(sg.left(), sg.top(), sg.right(), sg.top() + thickness)
+            elif uEdge == ABE_BOTTOM:
+                abd.rc = wt.RECT(sg.left(), sg.bottom() - thickness, sg.right(), sg.bottom())
+
+            shell32 = ctypes.windll.shell32
+            shell32.SHAppBarMessage(ABM_NEW, ctypes.byref(abd))
+            shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(abd))
+
+            # Apply the position the system gave back
+            self.setGeometry(abd.rc.left, abd.rc.top,
+                             abd.rc.right - abd.rc.left, abd.rc.bottom - abd.rc.top)
+        except Exception as e:
+            print(f"[AppBar] Failed to dock: {e}")
+            self._appbar_active = False
+
+    def _release_appbar(self):
+        """Release the appbar reservation."""
+        try:
+            import ctypes
+            import ctypes.wintypes as wt
+
+            ABM_REMOVE = 0x00000001
+
+            class APPBARDATA(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wt.DWORD), ("hWnd", wt.HWND), ("uCallbackMessage", wt.UINT),
+                    ("uEdge", wt.UINT), ("rc", wt.RECT), ("lParam", ctypes.c_long),
+                ]
+
+            abd = APPBARDATA()
+            abd.cbSize = ctypes.sizeof(APPBARDATA)
+            abd.hWnd = int(self.winId())
+            ctypes.windll.shell32.SHAppBarMessage(ABM_REMOVE, ctypes.byref(abd))
+        except Exception as e:
+            print(f"[AppBar] Failed to release: {e}")
 
     # ── Module Management ───────────────────────────────────────────────────
 
@@ -806,6 +919,14 @@ class MainWindow(QMainWindow):
             except:
                 self._loading_overlay = None
 
+        # Re-apply appbar on resize (debounced to avoid lag)
+        if getattr(self, "_appbar_active", False) and getattr(self, "_is_ready", False):
+            if not hasattr(self, "_appbar_resize_timer"):
+                self._appbar_resize_timer = QTimer(self)
+                self._appbar_resize_timer.setSingleShot(True)
+                self._appbar_resize_timer.timeout.connect(self._apply_appbar)
+            self._appbar_resize_timer.start(200)
+
     def _on_overlay_finished(self):
         self._loading_overlay = None
 
@@ -823,6 +944,8 @@ class MainWindow(QMainWindow):
                 "vertical_layout": self._layout_vertical,
                 "show_headers": self._show_headers,
                 "auto_hide_ui": self._auto_hide_ui,
+                "appbar_edge": self._appbar_edge,
+                "appbar_active": self._appbar_active,
                 "divider_width": getattr(self, "_divider_width", self.splitter.handleWidth()),
                 "divider_opacity": self._settings.get("window", {}).get("divider_opacity", 100)
             },
@@ -861,6 +984,10 @@ class MainWindow(QMainWindow):
         SettingsManager.save(settings)
 
         self.audio_engine.stop()
+        # Release appbar on close
+        if self._appbar_active:
+            self._appbar_active = False
+            self._release_appbar()
         event.accept()
         QApplication.instance().quit()
         

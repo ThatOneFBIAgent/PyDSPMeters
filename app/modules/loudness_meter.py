@@ -12,6 +12,31 @@ from app.modules import register_module
 from app.theme import Colors, Fonts
 from app.dsp.loudness import LoudnessMeter
 
+# Reactivity presets: display_alpha
+REACTIVITY_PRESETS = {
+    "Instant":  1.0,
+    "Fast":     0.7,
+    "Medium":   0.4,
+    "Slow":     0.15,
+    "Very Slow": 0.05,
+}
+
+def _short_unit(mode, avail_w):
+    """Return an adaptively shortened unit string based on available pixel width."""
+    # Full → Medium → Short
+    if mode == "LUFS":
+        candidates = ["LUFS", "LF", "L"]
+    elif mode == "RMS":
+        candidates = ["RMS", "RM", "R"]
+    else:  # dBTP
+        candidates = ["dBTP", "TP", "T"]
+        
+    if avail_w >= 45:
+        return candidates[0]
+    elif avail_w >= 25:
+        return candidates[1]
+    return candidates[2]
+
 
 @register_module("loudness", "Loudness Meter")
 class LoudnessModule(BaseModule):
@@ -26,6 +51,12 @@ class LoudnessModule(BaseModule):
         self._show_shortterm = True
         self._show_peak = True
         self._show_all_channels = False
+        self._show_labels = True
+        self._show_mode_indicator = True
+        self._show_follow_badge = True
+        self._show_scale = True
+        self._show_value_badges = True
+        self._reactivity = "Fast"
         
         # Values
         ch = audio_engine.channels
@@ -39,6 +70,9 @@ class LoudnessModule(BaseModule):
         self._disp_st = np.zeros(ch) - 60.0
         self._disp_peak = np.zeros(ch) - 60.0
         
+        # Peak follower for floating badge
+        self._peak_follow = -60.0
+        
         super().__init__(audio_engine, title="Loudness · LUFS", parent=parent)
         self.canvas.set_render_func(self._render)
 
@@ -48,7 +82,7 @@ class LoudnessModule(BaseModule):
         # Mode
         cm = menu.addMenu("Mode")
         cg = QActionGroup(self)
-        for m in ["LUFS", "RMS"]:
+        for m in ["LUFS", "RMS", "dBTP"]:
             a = cm.addAction(m)
             a.setCheckable(True)
             a.setChecked(m == self._mode)
@@ -64,6 +98,16 @@ class LoudnessModule(BaseModule):
             a.setChecked(o == self._orientation)
             a.triggered.connect(lambda checked, rot=o: setattr(self, "_orientation", rot))
             og.addAction(a)
+
+        # Reactivity
+        rm = menu.addMenu("Reactivity")
+        rg = QActionGroup(self)
+        for name in REACTIVITY_PRESETS:
+            a = rm.addAction(name)
+            a.setCheckable(True)
+            a.setChecked(name == self._reactivity)
+            a.triggered.connect(lambda checked, n=name: setattr(self, "_reactivity", n))
+            rg.addAction(a)
             
         menu.addSeparator()
         
@@ -84,6 +128,33 @@ class LoudnessModule(BaseModule):
         p_act.setCheckable(True)
         p_act.setChecked(self._show_peak)
         p_act.triggered.connect(lambda checked: setattr(self, "_show_peak", checked))
+        
+        vm.addSeparator()
+        
+        lbl_act = vm.addAction("Show Top Labels")
+        lbl_act.setCheckable(True)
+        lbl_act.setChecked(self._show_labels)
+        lbl_act.triggered.connect(lambda checked: setattr(self, "_show_labels", checked))
+        
+        ind_act = vm.addAction("Show Mode Badge")
+        ind_act.setCheckable(True)
+        ind_act.setChecked(self._show_mode_indicator)
+        ind_act.triggered.connect(lambda checked: setattr(self, "_show_mode_indicator", checked))
+
+        fb_act = vm.addAction("Show Follow Badge")
+        fb_act.setCheckable(True)
+        fb_act.setChecked(self._show_follow_badge)
+        fb_act.triggered.connect(lambda checked: setattr(self, "_show_follow_badge", checked))
+        
+        sc_act = vm.addAction("Show Scale")
+        sc_act.setCheckable(True)
+        sc_act.setChecked(getattr(self, "_show_scale", True))
+        sc_act.triggered.connect(lambda checked: setattr(self, "_show_scale", checked))
+        
+        vb_act = vm.addAction("Show Value Badges")
+        vb_act.setCheckable(True)
+        vb_act.setChecked(getattr(self, "_show_value_badges", True))
+        vb_act.triggered.connect(lambda checked: setattr(self, "_show_value_badges", checked))
         
         menu.addSeparator()
         
@@ -107,16 +178,32 @@ class LoudnessModule(BaseModule):
         self._rms_st = self._meter.rms_shortterm_channels
         self._peak = self._meter.true_peak_channels
         
-        # Smoothing for display
-        alpha = 0.3
+        # Get alpha from reactivity preset
+        alpha = REACTIVITY_PRESETS.get(self._reactivity, 0.4)
+        
         if self._mode == "LUFS":
             m_target, st_target = self._lufs_m, self._lufs_st
-        else:
+        elif self._mode == "RMS":
             m_target, st_target = self._rms_m, self._rms_st
+        else:  # dBTP
+            m_target, st_target = self._peak, self._peak
             
-        self._disp_m += (m_target - self._disp_m) * alpha
-        self._disp_st += (st_target - self._disp_st) * alpha
-        self._disp_peak += (self._peak - self._disp_peak) * alpha
+        # Apply smoothing directly - no rubber banding
+        self._disp_m = self._disp_m * (1.0 - alpha) + m_target * alpha
+        self._disp_st = self._disp_st * (1.0 - alpha) + st_target * alpha
+        self._disp_peak = self._disp_peak * (1.0 - 0.3) + self._peak * 0.3
+        
+        # Inverse-log peak follower (mono average)
+        db_floor = self._mode_scale()[0]
+        current_val = float(np.mean(m_target))
+        if current_val > self._peak_follow:
+            self._peak_follow = current_val
+        else:
+            db_range = abs(db_floor)
+            level_norm = max(0.01, (self._peak_follow - db_floor) / db_range)
+            decay_rate = 0.03 + (1.0 - level_norm) * 0.25
+            self._peak_follow -= decay_rate
+            self._peak_follow = max(db_floor, self._peak_follow)
 
     def on_channels_changed(self):
         """Reset buffers and meter when channel count changes."""
@@ -135,34 +222,66 @@ class LoudnessModule(BaseModule):
         return {
             "mode": self._mode,
             "orientation": self._orientation,
+            "reactivity": self._reactivity,
             "show_momentary": self._show_momentary,
             "show_shortterm": self._show_shortterm,
             "show_peak": self._show_peak,
-            "show_all_channels": self._show_all_channels
+            "show_all_channels": self._show_all_channels,
+            "show_labels": self._show_labels,
+            "show_mode_indicator": self._show_mode_indicator,
+            "show_follow_badge": self._show_follow_badge,
+            "show_scale": getattr(self, "_show_scale", True),
+            "show_value_badges": getattr(self, "_show_value_badges", True),
         }
 
     def apply_settings(self, settings):
         self._mode = settings.get("mode", self._mode)
         self.header.set_title(f"Loudness · {self._mode}")
-        self._orientation = settings.get("orientation", self._orientation)
+        self._orientation = settings.get("orientation", getattr(self, "_orientation", "Auto"))
+        self._reactivity = settings.get("reactivity", self._reactivity)
         self._show_momentary = settings.get("show_momentary", self._show_momentary)
         self._show_shortterm = settings.get("show_shortterm", self._show_shortterm)
         self._show_peak = settings.get("show_peak", self._show_peak)
         self._show_all_channels = settings.get("show_all_channels", self._show_all_channels)
+        self._show_labels = settings.get("show_labels", True)
+        self._show_mode_indicator = settings.get("show_mode_indicator", True)
+        self._show_follow_badge = settings.get("show_follow_badge", True)
+        self._show_scale = settings.get("show_scale", True)
+        self._show_value_badges = settings.get("show_value_badges", True)
 
-    def _get_smooth_color(self, val):
+    def _mode_scale(self):
+        """Return (db_min, db_max) appropriate for the current mode."""
+        if self._mode == "LUFS":
+            return -70.0, 0.0
+        elif self._mode == "RMS":
+            return -60.0, 0.0
+        else:  # dBTP
+            return -48.0, 0.0
+
+    def _mode_labels(self):
+        """Return bar labels appropriate for the current mode."""
+        if self._mode == "LUFS":
+            return ["Mom", "Short", "Peak"]
+        elif self._mode == "RMS":
+            return ["Fast", "Slow", "Peak"]
+        else:
+            return ["Peak", "Avg", "Hold"]
+
+    def _get_smooth_color(self, val, db_max=0.0):
+        """Color ramp relative to the mode's ceiling."""
         c_low, c_mid, c_high = QColor(Colors.METER_LOW), QColor(Colors.METER_MID), QColor(Colors.METER_HIGH)
-        if val <= -6:
+        dist = val - db_max  # distance below ceiling
+        if dist <= -6:
             return c_low
-        elif val <= -1:
-            f = (val + 6) / 5.0
+        elif dist <= -1:
+            f = (dist + 6) / 5.0
             return QColor(
                 int(c_low.red() + (c_mid.red() - c_low.red()) * f),
                 int(c_low.green() + (c_mid.green() - c_low.green()) * f),
                 int(c_low.blue() + (c_mid.blue() - c_low.blue()) * f)
             )
         else:
-            f = min(1.0, (val + 1) / 1.0)
+            f = min(1.0, (dist + 1) / 1.0)
             return QColor(
                 int(c_mid.red() + (c_high.red() - c_mid.red()) * f),
                 int(c_mid.green() + (c_high.green() - c_mid.green()) * f),
@@ -174,119 +293,241 @@ class LoudnessModule(BaseModule):
         if self._orientation == "Auto":
             is_vertical = h > w * 1.1
 
-        db_min, db_max = -60.0, 0.0
+        db_min, db_max = self._mode_scale()
         m = 4
-        
-        # Identify active meters
+
         active_indices = []
         if self._show_momentary: active_indices.append(0)
         if self._show_shortterm: active_indices.append(1)
-        if self._show_peak:      active_indices.append(2)
-        
-        if not active_indices:
+        if self._show_peak and not self._show_follow_badge:
+            active_indices.append(2)
+
+        if not active_indices and not self._show_follow_badge:
             return
 
-        labels = ["Fast", "Slow", "Peak"] if self._mode == "LUFS" else ["Mom", "Short", "Peak"]
-        
+        labels = self._mode_labels()
+
         if is_vertical:
             self._render_vertical(painter, w, h, active_indices, labels, db_min, db_max, m)
         else:
             self._render_horizontal(painter, w, h, active_indices, labels, db_min, db_max, m)
 
     def _render_vertical(self, painter, w, h, active_indices, labels, db_min, db_max, m):
-        n_groups = len(active_indices)
-        group_gap = 6
-        lbl_h = 16
-        val_h = 16
+        n_groups = max(1, len(active_indices))
+        group_gap = 4
+        lbl_h = 14 if self._show_labels else 0
+        val_h = 14 if getattr(self, "_show_value_badges", True) else 0
+        mode_h = 12 if self._show_mode_indicator else 0
+
         bar_y = m + lbl_h
-        bar_h = max(10, h - bar_y - val_h - m - 12) # Reserved space for mode at bottom
+        bar_h = max(10, h - bar_y - val_h - m - mode_h)
+
+        avail_w = w - m * 2
+        scale_w = 0
+        badge_w = 0
+        pk_bar_w = 0
+
+        if getattr(self, "_show_scale", True) and avail_w >= 40:
+            scale_w = 22
+
+        if self._show_follow_badge:
+            if avail_w >= 60:
+                badge_w = min(50, int(avail_w * 0.35))
+
+        # Space remaining for bars (main + follow peak)
+        total_gaps = (n_groups - 1) * group_gap
+        if self._show_follow_badge or scale_w > 0:
+            total_gaps += 4  # gap before right zone
+            if scale_w > 0 and self._show_follow_badge:
+                total_gaps += 2 # gap after scale
+            if badge_w > 0:
+                total_gaps += 2 # gap after peak
+
+        bars_avail = avail_w - scale_w - badge_w - total_gaps
+        total_units = n_groups + (0.5 if self._show_follow_badge else 0)
         
-        # Total available width for bars
-        avail_w = w - m*2 - group_gap * (n_groups - 1)
-        group_w = avail_w / n_groups
+        ideal_bar_w = max(4, bars_avail / total_units) if total_units > 0 else bars_avail
+        bar_w = min(ideal_bar_w, 36) if (self._show_follow_badge or scale_w > 0) else ideal_bar_w
         
+        single_bar_w = bar_w
+        if self._show_all_channels:
+            ch_count = self.audio_engine.channels
+            single_bar_w = (bar_w - (ch_count-1)*2) / ch_count
+            
+        if self._show_follow_badge:
+            pk_bar_w = max(3, int(single_bar_w * 0.5))
+
+        # Calculate actual content width to center it (add 12px padding budget so the badge pill doesn't clip)
+        actual_content_w = (bar_w * n_groups) + pk_bar_w + scale_w + badge_w + total_gaps + (12 if badge_w > 0 else 0)
+        start_x = m + max(0, (avail_w - actual_content_w) / 2)
+
+        # Draw meter bars
         for idx, meter_idx in enumerate(active_indices):
-            gx = m + idx * (group_w + group_gap)
-            
-            # Label
-            painter.setFont(self.get_responsive_font(Fonts.small, group_w, lbl_h, labels[meter_idx]))
-            self.draw_text_badge(painter, QRectF(gx, m, group_w, lbl_h), Qt.AlignCenter, labels[meter_idx], QColor(Colors.TEXT_DIM))
-            
-            # Get values
-            if meter_idx == 0:   vals, raw = self._disp_m, (self._lufs_m if self._mode == "LUFS" else self._rms_m)
-            elif meter_idx == 1: vals, raw = self._disp_st, (self._lufs_st if self._mode == "LUFS" else self._rms_st)
+            gx = start_x + idx * (bar_w + group_gap)
+
+            if self._show_labels:
+                painter.setFont(self.get_responsive_font(Fonts.small, bar_w, lbl_h, labels[meter_idx]))
+                self.draw_text_badge(painter, QRectF(gx, m, bar_w, lbl_h), Qt.AlignCenter, labels[meter_idx], QColor(Colors.TEXT_DIM))
+
+            if meter_idx == 0:   vals, raw = self._disp_m, (self._lufs_m if self._mode == "LUFS" else (self._rms_m if self._mode == "RMS" else self._peak))
+            elif meter_idx == 1: vals, raw = self._disp_st, (self._lufs_st if self._mode == "LUFS" else (self._rms_st if self._mode == "RMS" else self._peak))
             else:                vals, raw = self._disp_peak, self._peak
-            
-            # Create Vertical Gradient
+
             grad = QLinearGradient(0, bar_y + bar_h, 0, bar_y)
             grad.setColorAt(0.0, QColor(Colors.METER_LOW))
             grad.setColorAt(0.7, QColor(Colors.METER_LOW))
             grad.setColorAt(0.85, QColor(Colors.METER_MID))
             grad.setColorAt(1.0, QColor(Colors.METER_HIGH))
 
-            # Draw Bars
             if self._show_all_channels:
                 ch_count = self.audio_engine.channels
-                bw = (group_w - (ch_count-1)*2) / ch_count
+                bw = (bar_w - (ch_count-1)*2) / ch_count
                 for ch in range(ch_count):
                     bx = gx + ch * (bw + 2)
                     painter.fillRect(QRectF(bx, bar_y, bw, bar_h), QColor(Colors.BG_INPUT))
                     f = np.clip((vals[ch] - db_min) / (db_max - db_min), 0, 1)
                     if f > 0:
                         painter.fillRect(QRectF(bx, bar_y + bar_h - f * bar_h, bw, f * bar_h), QBrush(grad))
-                v_max = np.max(raw)
+                v_max = float(np.max(raw))
             else:
-                v_avg = np.mean(vals)
-                painter.fillRect(QRectF(gx, bar_y, group_w, bar_h), QColor(Colors.BG_INPUT))
+                v_avg = float(np.mean(vals))
+                painter.fillRect(QRectF(gx, bar_y, bar_w, bar_h), QColor(Colors.BG_INPUT))
                 f = np.clip((v_avg - db_min) / (db_max - db_min), 0, 1)
                 if f > 0:
-                    painter.fillRect(QRectF(gx, bar_y + bar_h - f * bar_h, group_w, f * bar_h), QBrush(grad))
-                v_max = np.max(raw)
-            
-            # Value Badge
-            ps_col = self._get_smooth_color(v_max)
-            ps = f"{v_max:.0f}" if v_max > -100 else "-∞"
-            painter.setFont(self.get_responsive_font(Fonts.value, group_w, val_h, ps))
-            self.draw_text_badge(painter, QRectF(gx, bar_y + bar_h + 2, group_w, val_h), Qt.AlignCenter, ps, ps_col)
+                    painter.fillRect(QRectF(gx, bar_y + bar_h - f * bar_h, bar_w, f * bar_h), QBrush(grad))
+                v_max = float(np.max(raw))
 
-        # Vertical Mode Indicator (Horizontal strip at bottom)
-        mode_rect = QRectF(m, h - 14, w - m*2, 10)
-        painter.setFont(self.get_responsive_font(Fonts.small, mode_rect.width(), mode_rect.height(), self._mode))
-        self.draw_text_badge(painter, mode_rect, Qt.AlignCenter, self._mode, QColor(Colors.ACCENT), QColor(0, 0, 0, 100))
+            if getattr(self, "_show_value_badges", True):
+                ps_col = self._get_smooth_color(v_max, db_max)
+                ps = f"{v_max:.0f}" if v_max > -100 else "-∞"
+                painter.setFont(self.get_responsive_font(Fonts.value, bar_w, val_h, ps))
+                self.draw_text_badge(painter, QRectF(gx, bar_y + bar_h + 2, bar_w, val_h), Qt.AlignCenter, ps, ps_col)
+
+        # ── Right zone: [scale | peak_bar | badge] ──
+        if self._show_follow_badge or getattr(self, "_show_scale", True):
+            cur_x = start_x + n_groups * bar_w + (n_groups - 1) * group_gap + 4
+
+            if scale_w > 0:
+                painter.save()
+                painter.setPen(QPen(QColor(Colors.TEXT_DIM), 1))
+                painter.setFont(self.get_responsive_font(Fonts.small, scale_w, 10, "-60"))
+                for db in range(0, int(db_min) - 1, -6):
+                    if bar_h < 80 and db not in [0, -12, -24, -48, -60, -72]: continue
+                    if bar_h < 150 and db not in [0, -6, -12, -24, -36, -48, -60, -72]: continue
+                    frac = (db - db_min) / (db_max - db_min)
+                    ty = bar_y + bar_h - frac * bar_h
+                    painter.drawLine(int(cur_x), int(ty), int(cur_x + 3), int(ty))
+                    if scale_w > 12:
+                        painter.drawText(QRectF(cur_x + 4, ty - 5, scale_w - 4, 10), Qt.AlignVCenter | Qt.AlignLeft, str(db))
+                painter.restore()
+                cur_x += scale_w + 2
+
+            if self._show_follow_badge:
+                # Peak bar
+                painter.fillRect(QRectF(cur_x, bar_y, pk_bar_w, bar_h), QColor(Colors.BG_INPUT))
+                pf_norm = float(np.clip((self._peak_follow - db_min) / (db_max - db_min), 0, 1))
+                if pf_norm > 0:
+                    pk_grad = QLinearGradient(0, bar_y + bar_h, 0, bar_y)
+                    pk_grad.setColorAt(0.0, QColor(Colors.METER_LOW))
+                    pk_grad.setColorAt(0.7, QColor(Colors.METER_LOW))
+                    pk_grad.setColorAt(0.85, QColor(Colors.METER_MID))
+                    pk_grad.setColorAt(1.0, QColor(Colors.METER_HIGH))
+                    fill_h = pf_norm * bar_h
+                    painter.fillRect(QRectF(cur_x, bar_y + bar_h - fill_h, pk_bar_w, fill_h), QBrush(pk_grad))
+                
+                pk_right = cur_x + pk_bar_w
+                cur_x = pk_right + 2
+    
+                # Floating badge label
+                if badge_w > 0:
+                    pf_y = bar_y + bar_h - pf_norm * bar_h
+                    
+                    unit = _short_unit(self._mode, badge_w)
+                    pf_val = f"{self._peak_follow:.1f}" if badge_w > 30 else f"{self._peak_follow:.0f}"
+                    pf_text = f"{pf_val}{unit}"
+                    label_h = min(14, max(8, int(bar_h * 0.06)))
+                    
+                    ly = pf_y - label_h / 2.0
+                    ly = max(bar_y, min(bar_y + bar_h - label_h, ly))
+    
+                    painter.setFont(self.get_responsive_font(Fonts.small, badge_w, label_h, pf_text))
+                    
+                    # Offset text start so pill's left padding doesn't overlap tick
+                    pad_x = int(4 * getattr(Fonts, 'TEXT_SCALE', 1.0))
+                    badge_x = cur_x + pad_x
+    
+                    self.draw_text_badge(
+                        painter, QRectF(badge_x, ly, badge_w, label_h),
+                        Qt.AlignVCenter | Qt.AlignLeft, pf_text,
+                        QColor(Colors.BG_DARK), QColor(Colors.ACCENT)
+                    )
+                    
+                    painter.setPen(QPen(QColor(Colors.ACCENT), 1))
+                    tick_y = int(ly + label_h / 2)
+                    painter.drawLine(int(pk_right), tick_y, int(badge_x - pad_x), tick_y)
+
+        # Mode Indicator
+        if self._show_mode_indicator:
+            chars = list(self._mode)
+            if len(chars) > 0 and avail_w > 0:
+                painter.save()
+                painter.setOpacity(0.6)
+                painter.setFont(Fonts.small())
+                ch_w = avail_w / len(chars)
+                for idx, char in enumerate(chars):
+                    char_rect = QRectF(m + idx * ch_w, h - 14, ch_w, 10)
+                    painter.drawText(char_rect, Qt.AlignCenter, char)
+                painter.restore()
 
     def _render_horizontal(self, painter, w, h, active_indices, labels, db_min, db_max, m):
-        mode_w = 14
-        lbl_w = 38
-        val_w = 46
-        bar_x = m + mode_w + lbl_w + 6
-        bar_w = max(10, w - bar_x - val_w - m - 2)
+        mode_w = 14 if self._show_mode_indicator else 0
+        lbl_w = 38 if self._show_labels else 0
+        val_w = 46 if getattr(self, "_show_value_badges", True) else 0
+        bar_x = m + mode_w + lbl_w + (6 if (mode_w + lbl_w) > 0 else 0)
+        bar_w = max(10, w - bar_x - val_w - m - (2 if val_w > 0 else 0))
         
-        n_rows = len(active_indices)
+        # Reserve bottom row for follow badge if enabled — scales with height
+        badge_h = 0
+        pk_bar_h = 3
+        if self._show_follow_badge:
+            badge_h = max(12, min(28, int(h * 0.18)))
+            pk_bar_h = max(2, min(5, int(h * 0.02)))
+        
+        n_rows = max(1, len(active_indices))
         row_gap = 3
-        row_h = (h - m*2 - row_gap * (n_rows - 1)) // n_rows
+        avail_h = h - m * 2 - badge_h - (2 if badge_h > 0 else 0)
+        
+        ideal_row_h = max(6, (avail_h - row_gap * (n_rows - 1)) // n_rows)
+        # Cap row height only if follow badge is present to maintain proportions
+        row_h = min(ideal_row_h, 24) if self._show_follow_badge else ideal_row_h
+        
+        actual_content_h = (row_h * n_rows) + (row_gap * (n_rows - 1))
+        start_y = m + max(0, (avail_h - actual_content_h) / 2)
         
         # Draw Vertical Mode Strip
-        chars = list(self._mode)
-        if len(chars) > 0 and h > m*2:
-            painter.save()
-            painter.setOpacity(0.6)
-            painter.setFont(Fonts.small())
-            ch_h = (h - m*2) / len(chars)
-            for idx, char in enumerate(chars):
-                char_rect = QRectF(m, m + idx * ch_h, mode_w, ch_h)
-                painter.drawText(char_rect, Qt.AlignCenter, char)
-            painter.restore()
+        if self._show_mode_indicator:
+            chars = list(self._mode)
+            if len(chars) > 0 and h > m*2:
+                painter.save()
+                painter.setOpacity(0.6)
+                painter.setFont(Fonts.small())
+                ch_h = (h - m*2) / len(chars)
+                for idx, char in enumerate(chars):
+                    char_rect = QRectF(m, m + idx * ch_h, mode_w, ch_h)
+                    painter.drawText(char_rect, Qt.AlignCenter, char)
+                painter.restore()
 
         for idx, meter_idx in enumerate(active_indices):
-            ry = m + idx * (row_h + row_gap)
+            ry = start_y + idx * (row_h + row_gap)
             
             # Label
-            painter.setFont(self.get_responsive_font(Fonts.small, lbl_w, row_h, labels[meter_idx]))
-            self.draw_text_badge(painter, QRectF(m + mode_w, ry, lbl_w, row_h), Qt.AlignVCenter | Qt.AlignRight, labels[meter_idx], QColor(Colors.TEXT_DIM))
+            if self._show_labels:
+                painter.setFont(self.get_responsive_font(Fonts.small, lbl_w, row_h, labels[meter_idx]))
+                self.draw_text_badge(painter, QRectF(m + mode_w, ry, lbl_w, row_h), Qt.AlignVCenter | Qt.AlignRight, labels[meter_idx], QColor(Colors.TEXT_DIM))
             
             # Get values
-            if meter_idx == 0:   vals, raw = self._disp_m, (self._lufs_m if self._mode == "LUFS" else self._rms_m)
-            elif meter_idx == 1: vals, raw = self._disp_st, (self._lufs_st if self._mode == "LUFS" else self._rms_st)
+            if meter_idx == 0:   vals, raw = self._disp_m, (self._lufs_m if self._mode == "LUFS" else (self._rms_m if self._mode == "RMS" else self._peak))
+            elif meter_idx == 1: vals, raw = self._disp_st, (self._lufs_st if self._mode == "LUFS" else (self._rms_st if self._mode == "RMS" else self._peak))
             else:                vals, raw = self._disp_peak, self._peak
             
             # Create Horizontal Gradient
@@ -306,17 +547,58 @@ class LoudnessModule(BaseModule):
                     f = np.clip((vals[ch] - db_min) / (db_max - db_min), 0, 1)
                     if f > 0:
                         painter.fillRect(QRectF(bar_x, by, f * bar_w, bh), QBrush(grad))
-                v_max = np.max(raw)
+                v_max = float(np.max(raw))
             else:
-                v_avg = np.mean(vals)
+                v_avg = float(np.mean(vals))
                 painter.fillRect(QRectF(bar_x, ry + 1, bar_w, row_h - 2), QColor(Colors.BG_INPUT))
                 f = np.clip((v_avg - db_min) / (db_max - db_min), 0, 1)
                 if f > 0:
                     painter.fillRect(QRectF(bar_x, ry + 1, f * bar_w, row_h - 2), QBrush(grad))
-                v_max = np.max(raw)
+                v_max = float(np.max(raw))
                 
             # Value Badge
-            ps = f"{v_max:.1f}" if v_max > -100 else "-∞"
-            painter.setFont(self.get_responsive_font(Fonts.value, val_w, row_h, ps))
-            ps_col = self._get_smooth_color(v_max)
-            self.draw_text_badge(painter, QRectF(bar_x + bar_w + 2, ry, val_w, row_h), Qt.AlignVCenter | Qt.AlignRight, ps, ps_col)
+            if getattr(self, "_show_value_badges", True):
+                ps = f"{v_max:.1f}" if v_max > -100 else "-∞"
+                painter.setFont(self.get_responsive_font(Fonts.value, val_w, row_h, ps))
+                ps_col = self._get_smooth_color(v_max, db_max)
+                self.draw_text_badge(painter, QRectF(bar_x + bar_w + 2, ry, val_w, row_h), Qt.AlignVCenter | Qt.AlignRight, ps, ps_col)
+
+        # Horizontal follow badge row at the bottom
+        if self._show_follow_badge:
+            badge_y = h - m - badge_h
+            
+            # Mono peak bar (horizontal, thin)
+            painter.fillRect(QRectF(bar_x, badge_y, bar_w, pk_bar_h), QColor(Colors.BG_INPUT))
+            pf_norm = float(np.clip((self._peak_follow - db_min) / (db_max - db_min), 0, 1))
+            if pf_norm > 0:
+                pk_grad = QLinearGradient(bar_x, 0, bar_x + bar_w, 0)
+                pk_grad.setColorAt(0.0, QColor(Colors.METER_LOW))
+                pk_grad.setColorAt(0.7, QColor(Colors.METER_LOW))
+                pk_grad.setColorAt(0.85, QColor(Colors.METER_MID))
+                pk_grad.setColorAt(1.0, QColor(Colors.METER_HIGH))
+                painter.fillRect(QRectF(bar_x, badge_y, pf_norm * bar_w, pk_bar_h), QBrush(pk_grad))
+            
+            # Floating label
+            pf_x = bar_x + pf_norm * bar_w
+            
+            label_w = max(30, min(70, int(bar_w * 0.25)))
+            unit = _short_unit(self._mode, label_w)
+            
+            pf_val = f"{self._peak_follow:.1f}" if bar_w > 60 else f"{self._peak_follow:.0f}"
+            pf_text = f"{pf_val}{unit}"
+            label_h = max(8, badge_h - pk_bar_h - 4)
+            
+            lx = pf_x - label_w / 2.0
+            lx = max(bar_x, min(bar_x + bar_w - label_w, lx))
+            ly = badge_y + pk_bar_h + 2
+            
+            painter.setFont(self.get_responsive_font(Fonts.small, label_w, label_h, pf_text))
+            self.draw_text_badge(
+                painter, QRectF(lx, ly, label_w, label_h),
+                Qt.AlignCenter, pf_text,
+                QColor(Colors.BG_DARK), QColor(Colors.ACCENT)
+            )
+            
+            # Vertical tick line from bar to label
+            painter.setPen(QPen(QColor(Colors.ACCENT), 1))
+            painter.drawLine(int(pf_x), int(badge_y + pk_bar_h), int(pf_x), int(ly))

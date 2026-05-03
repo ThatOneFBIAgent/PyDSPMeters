@@ -40,8 +40,15 @@ Monitors loudness levels according to broadcast and mastering standards.
 *   **Mode**: 
     *   *LUFS*: Loudness Units relative to Full Scale (ITU-R BS.1770).
     *   *RMS*: Root Mean Square average of signal power.
+    *   *dBTP*: True Peak in decibels (dBTP).
+*   **Reactivity**: Changes the responsiveness of the meters.
+    *   *Instant*: Instantaneous response (1.0).
+    *   *Fast*: Fast response (0.7).
+    *   *Medium*: Medium response (0.4).
+    *   *Slow*: Slow response (0.15).
+    *   *Very Slow*: Very slow response (0.05).
 *   **Orientation**: *Auto*, *Horizontal*, or *Vertical*.
-*   **Show / Hide Toggles**: Individual toggles for *Fast/Mom*, *Slow/Short*, and *Peak* indicators.
+*   **Show / Hide Toggles**: Individual toggles for *Fast/Mom*, *Slow/Short*, and *Peak* indicators, **Top Lables**, **Mode Badge**, **Follow Badge**.
 *   **Show All Channels**: Splits the meter into individual lanes for every active audio channel.
 
 ---
