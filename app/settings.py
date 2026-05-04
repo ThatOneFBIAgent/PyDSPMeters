@@ -10,26 +10,24 @@ class SettingsManager:
     """Manages application settings persistence using a JSON file."""
 
     @staticmethod
-    def get_settings_path():
+    def get_app_data_dir():
         """
-        Stores settings.json in the user's platform-appropriate config directory.
-
-        - Windows:  %APPDATA%\\YourAppName\\settings.json
-        - macOS:    ~/Library/Application Support/YourAppName/settings.json
-        - Linux:    ~/.config/YourAppName/settings.json
+        Returns the platform-appropriate config directory for the application.
         """
         if sys.platform == "win32":
             base = os.environ.get("APPDATA") or os.path.expanduser("~")
         elif sys.platform == "darwin":
             base = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
         else:
-            # Linux / other Unix
             base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
 
         app_dir = os.path.join(base, APP_NAME)
-        os.makedirs(app_dir, exist_ok=True)  # Create the folder if it doesn't exist yet
+        os.makedirs(app_dir, exist_ok=True)
+        return app_dir
 
-        return os.path.join(app_dir, SETTINGS_FILE)
+    @classmethod
+    def get_settings_path(cls):
+        return os.path.join(cls.get_app_data_dir(), SETTINGS_FILE)
 
     @classmethod
     def load(cls):

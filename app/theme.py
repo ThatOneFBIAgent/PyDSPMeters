@@ -13,6 +13,7 @@ THEME_PRESETS = {
     "Midnight": {
         "BG_DARKEST": "#08080f", "BG_DARK": "#0e0e1a", "BG_MODULE": "#131320",
         "BG_HEADER": "#181830", "BG_SETTINGS": "#1a1a2e", "BG_INPUT": "#10101e",
+        "BG_BADGE": "#1a1a35", "BG_BADGE_ALPHA": 180,
         "BORDER": "#252545", "BORDER_ACCENT": "#3a3a6a",
         "ACCENT": "#00d4ff", "ACCENT_DIM": "#0088aa",
         "ACCENT_PURPLE": "#7c4dff", "ACCENT_PINK": "#ff4da6",
@@ -29,6 +30,7 @@ THEME_PRESETS = {
     "Abyss": {
         "BG_DARKEST": "#000000", "BG_DARK": "#0a0a0a", "BG_MODULE": "#0f0f0f",
         "BG_HEADER": "#161616", "BG_SETTINGS": "#1a1a1a", "BG_INPUT": "#0c0c0c",
+        "BG_BADGE": "#111111", "BG_BADGE_ALPHA": 180,
         "BORDER": "#2a2a2a", "BORDER_ACCENT": "#3a3a3a",
         "ACCENT": "#e0e0e0", "ACCENT_DIM": "#808080",
         "ACCENT_PURPLE": "#9a9a9a", "ACCENT_PINK": "#c0c0c0",
@@ -44,6 +46,7 @@ THEME_PRESETS = {
     "Neon": {
         "BG_DARKEST": "#050a05", "BG_DARK": "#0a120a", "BG_MODULE": "#0e180e",
         "BG_HEADER": "#122012", "BG_SETTINGS": "#162816", "BG_INPUT": "#0a100a",
+        "BG_BADGE": "#0e2a18", "BG_BADGE_ALPHA": 180,
         "BORDER": "#1a3a1a", "BORDER_ACCENT": "#2a5a2a",
         "ACCENT": "#00ff88", "ACCENT_DIM": "#009950",
         "ACCENT_PURPLE": "#00cc66", "ACCENT_PINK": "#88ff00",
@@ -59,6 +62,7 @@ THEME_PRESETS = {
     "Ember": {
         "BG_DARKEST": "#0c0806", "BG_DARK": "#140e0a", "BG_MODULE": "#1a1410",
         "BG_HEADER": "#221a14", "BG_SETTINGS": "#2a2018", "BG_INPUT": "#120e08",
+        "BG_BADGE": "#2a1800", "BG_BADGE_ALPHA": 180,
         "BORDER": "#3a2a1a", "BORDER_ACCENT": "#5a4030",
         "ACCENT": "#ff8800", "ACCENT_DIM": "#aa5500",
         "ACCENT_PURPLE": "#ff6622", "ACCENT_PINK": "#ffaa44",
@@ -74,6 +78,7 @@ THEME_PRESETS = {
     "Amethyst": {
         "BG_DARKEST": "#08060f", "BG_DARK": "#100c1a", "BG_MODULE": "#161222",
         "BG_HEADER": "#1e1830", "BG_SETTINGS": "#241e38", "BG_INPUT": "#0e0a18",
+        "BG_BADGE": "#1e1435", "BG_BADGE_ALPHA": 180,
         "BORDER": "#302848", "BORDER_ACCENT": "#4a3a6a",
         "ACCENT": "#b060ff", "ACCENT_DIM": "#7030aa",
         "ACCENT_PURPLE": "#9040dd", "ACCENT_PINK": "#d080ff",
@@ -89,6 +94,7 @@ THEME_PRESETS = {
     "Transparent Ghost": {
         "BG_DARKEST": "#05000000", "BG_DARK": "#05000000", "BG_MODULE": "#05000000",
         "BG_HEADER": "#05000000", "BG_SETTINGS": "#05000000", "BG_INPUT": "#05000000",
+        "BG_BADGE": "#0a0a2a", "BG_BADGE_ALPHA": 120,
         "BORDER": "#00000000", "BORDER_ACCENT": "#00000000",
         "ACCENT": "#00d4ff", "ACCENT_DIM": "#0088aa",
         "ACCENT_PURPLE": "#7c4dff", "ACCENT_PINK": "#ff4da6",
@@ -105,6 +111,7 @@ THEME_PRESETS = {
     "Slate": {
         "BG_DARKEST": "#1a1b26", "BG_DARK": "#24283b", "BG_MODULE": "#2f354a",
         "BG_HEADER": "#3b4261", "BG_SETTINGS": "#414868", "BG_INPUT": "#1a1b26",
+        "BG_BADGE": "#2f354a", "BG_BADGE_ALPHA": 180,
         "BORDER": "#565f89", "BORDER_ACCENT": "#7aa2f7",
         "ACCENT": "#7aa2f7", "ACCENT_DIM": "#2ac3de",
         "ACCENT_PURPLE": "#bb9af7", "ACCENT_PINK": "#f7768e",
@@ -116,6 +123,7 @@ THEME_PRESETS = {
     "Modern Light": {
         "BG_DARKEST": "#f0f0f5", "BG_DARK": "#ffffff", "BG_MODULE": "#fcfcfd",
         "BG_HEADER": "#e8e8f0", "BG_SETTINGS": "#ffffff", "BG_INPUT": "#f5f5f9",
+        "BG_BADGE": "#dde8f8", "BG_BADGE_ALPHA": 180,
         "BORDER": "#d1d1e0", "BORDER_ACCENT": "#4a90e2",
         "ACCENT": "#4a90e2", "ACCENT_DIM": "#357abd",
         "ACCENT_PURPLE": "#9013fe", "ACCENT_PINK": "#d0021b",
@@ -131,6 +139,7 @@ THEME_PRESETS = {
     "Glass": {
         "BG_DARKEST": "#10ffffff", "BG_DARK": "#15ffffff", "BG_MODULE": "#20ffffff",
         "BG_HEADER": "#30ffffff", "BG_SETTINGS": "#40ffffff", "BG_INPUT": "#10ffffff",
+        "BG_BADGE": "#ffffff", "BG_BADGE_ALPHA": 40,
         "BORDER": "#40ffffff", "BORDER_ACCENT": "#80ffffff",
         "ACCENT": "#ffffff", "ACCENT_DIM": "#cccccc",
         "ACCENT_PURPLE": "#e0e0e0", "ACCENT_PINK": "#f0f0f0",
@@ -142,6 +151,7 @@ THEME_PRESETS = {
     "Aurora": {
         "BG_DARKEST": "#05101a", "BG_DARK": "#0a1f30", "BG_MODULE": "#0f2a42",
         "BG_HEADER": "#163550", "BG_SETTINGS": "#1a3d5c", "BG_INPUT": "#081828",
+        "BG_BADGE": "#071e28", "BG_BADGE_ALPHA": 180,
         "BORDER": "#1a4060", "BORDER_ACCENT": "#2a6080",
         "ACCENT": "#00ffcc", "ACCENT_DIM": "#00aa88",
         "ACCENT_PURPLE": "#00ccff", "ACCENT_PINK": "#ff44aa",
@@ -157,6 +167,7 @@ THEME_PRESETS = {
     "Crimson": {
         "BG_DARKEST": "#100508", "BG_DARK": "#1a080c", "BG_MODULE": "#220a10",
         "BG_HEADER": "#2a0c14", "BG_SETTINGS": "#321018", "BG_INPUT": "#150608",
+        "BG_BADGE": "#2a0810", "BG_BADGE_ALPHA": 180,
         "BORDER": "#3a1020", "BORDER_ACCENT": "#5a1830",
         "ACCENT": "#ff2255", "ACCENT_DIM": "#aa1133",
         "ACCENT_PURPLE": "#ff0044", "ACCENT_PINK": "#ff6688",
@@ -172,6 +183,7 @@ THEME_PRESETS = {
     "Solar": {
         "BG_DARKEST": "#0f0c00", "BG_DARK": "#1a1400", "BG_MODULE": "#241c00",
         "BG_HEADER": "#2e2400", "BG_SETTINGS": "#382c00", "BG_INPUT": "#120e00",
+        "BG_BADGE": "#2a1e00", "BG_BADGE_ALPHA": 180,
         "BORDER": "#3a3000", "BORDER_ACCENT": "#5a4c00",
         "ACCENT": "#ffd700", "ACCENT_DIM": "#aa9000",
         "ACCENT_PURPLE": "#ffaa00", "ACCENT_PINK": "#ffe066",
@@ -187,6 +199,7 @@ THEME_PRESETS = {
     "Arctic": {
         "BG_DARKEST": "#060e18", "BG_DARK": "#0c1828", "BG_MODULE": "#122035",
         "BG_HEADER": "#182840", "BG_SETTINGS": "#1e304c", "BG_INPUT": "#090e18",
+        "BG_BADGE": "#0a1828", "BG_BADGE_ALPHA": 180,
         "BORDER": "#1e3a55", "BORDER_ACCENT": "#2e5070",
         "ACCENT": "#88ddff", "ACCENT_DIM": "#3399cc",
         "ACCENT_PURPLE": "#aaddff", "ACCENT_PINK": "#66aadd",
@@ -202,6 +215,7 @@ THEME_PRESETS = {
     "Absinthe": {
         "BG_DARKEST": "#060f08", "BG_DARK": "#0c1a10", "BG_MODULE": "#122018",
         "BG_HEADER": "#182a20", "BG_SETTINGS": "#1e3228", "BG_INPUT": "#090e0a",
+        "BG_BADGE": "#0e2214", "BG_BADGE_ALPHA": 180,
         "BORDER": "#203820", "BORDER_ACCENT": "#304e30",
         "ACCENT": "#88ff44", "ACCENT_DIM": "#55aa22",
         "ACCENT_PURPLE": "#66dd33", "ACCENT_PINK": "#ccff88",
@@ -217,6 +231,7 @@ THEME_PRESETS = {
     "Rose Quartz": {
         "BG_DARKEST": "#0f080c", "BG_DARK": "#1a1018", "BG_MODULE": "#221520",
         "BG_HEADER": "#2a1a28", "BG_SETTINGS": "#321e30", "BG_INPUT": "#120a10",
+        "BG_BADGE": "#2a1020", "BG_BADGE_ALPHA": 180,
         "BORDER": "#3a2030", "BORDER_ACCENT": "#5a3050",
         "ACCENT": "#ff80b0", "ACCENT_DIM": "#cc4488",
         "ACCENT_PURPLE": "#dd60a0", "ACCENT_PINK": "#ffaacf",
@@ -232,6 +247,7 @@ THEME_PRESETS = {
     "Transparent Crimson": {
         "BG_DARKEST": "#05000000", "BG_DARK": "#05000000", "BG_MODULE": "#05000000",
         "BG_HEADER": "#05000000", "BG_SETTINGS": "#05000000", "BG_INPUT": "#05000000",
+        "BG_BADGE": "#220008", "BG_BADGE_ALPHA": 120,
         "BORDER": "#00000000", "BORDER_ACCENT": "#00000000",
         "ACCENT": "#ff2255", "ACCENT_DIM": "#aa1133",
         "ACCENT_PURPLE": "#ff0044", "ACCENT_PINK": "#ff6688",
@@ -247,6 +263,7 @@ THEME_PRESETS = {
     "Transparent Aurora": {
         "BG_DARKEST": "#05000000", "BG_DARK": "#05000000", "BG_MODULE": "#05000000",
         "BG_HEADER": "#05000000", "BG_SETTINGS": "#05000000", "BG_INPUT": "#05000000",
+        "BG_BADGE": "#041418", "BG_BADGE_ALPHA": 120,
         "BORDER": "#00000000", "BORDER_ACCENT": "#00000000",
         "ACCENT": "#00ffcc", "ACCENT_DIM": "#00aa88",
         "ACCENT_PURPLE": "#00ccff", "ACCENT_PINK": "#ff44aa",
@@ -259,9 +276,10 @@ THEME_PRESETS = {
             (0.55, "#00ffcccc"), (1.00, "#aaffeeff")
         ]
     },
-    "Verdant": {  # Spotify
+    "Verdant": {
         "BG_DARKEST": "#060e06", "BG_DARK": "#0a140a", "BG_MODULE": "#111b11",
         "BG_HEADER": "#162116", "BG_SETTINGS": "#1a281a", "BG_INPUT": "#090e09",
+        "BG_BADGE": "#0a1e0e", "BG_BADGE_ALPHA": 180,
         "BORDER": "#1a3a1a", "BORDER_ACCENT": "#1ed760",
         "ACCENT": "#1ed760", "ACCENT_DIM": "#158a3e",
         "ACCENT_PURPLE": "#1db954", "ACCENT_PINK": "#1fdf64",
@@ -277,6 +295,7 @@ THEME_PRESETS = {
     "Tangerine": {
         "BG_DARKEST": "#0f0a00", "BG_DARK": "#1a1000", "BG_MODULE": "#221600",
         "BG_HEADER": "#2a1c00", "BG_SETTINGS": "#332200", "BG_INPUT": "#160e00",
+        "BG_BADGE": "#221200", "BG_BADGE_ALPHA": 180,
         "BORDER": "#3d2600", "BORDER_ACCENT": "#ff8c00",
         "ACCENT": "#ff8c00", "ACCENT_DIM": "#cc6600",
         "ACCENT_PURPLE": "#ff6600", "ACCENT_PINK": "#ffaa33",
@@ -292,6 +311,7 @@ THEME_PRESETS = {
     "Obsidian Wave": {
         "BG_DARKEST": "#000000", "BG_DARK": "#080808", "BG_MODULE": "#101010",
         "BG_HEADER": "#181818", "BG_SETTINGS": "#202020", "BG_INPUT": "#080808",
+        "BG_BADGE": "#111111", "BG_BADGE_ALPHA": 180,
         "BORDER": "#2a2a2a", "BORDER_ACCENT": "#ffffff",
         "ACCENT": "#ffffff", "ACCENT_DIM": "#aaaaaa",
         "ACCENT_PURPLE": "#cccccc", "ACCENT_PINK": "#e0e0e0",
@@ -307,6 +327,7 @@ THEME_PRESETS = {
     "Ivory": {
         "BG_DARKEST": "#0a0a0a", "BG_DARK": "#141414", "BG_MODULE": "#1c1c1c",
         "BG_HEADER": "#242424", "BG_SETTINGS": "#2a2a2a", "BG_INPUT": "#111111",
+        "BG_BADGE": "#1a0a0c", "BG_BADGE_ALPHA": 180,
         "BORDER": "#383838", "BORDER_ACCENT": "#fc3c44",
         "ACCENT": "#fc3c44", "ACCENT_DIM": "#c0222a",
         "ACCENT_PURPLE": "#dd2233", "ACCENT_PINK": "#ff6066",
@@ -322,6 +343,7 @@ THEME_PRESETS = {
     "Blueprint": {
         "BG_DARKEST": "#0f0f0f", "BG_DARK": "#1a1a1a", "BG_MODULE": "#222222",
         "BG_HEADER": "#2a2a2a", "BG_SETTINGS": "#313131", "BG_INPUT": "#161616",
+        "BG_BADGE": "#141a24", "BG_BADGE_ALPHA": 180,
         "BORDER": "#3a3a3a", "BORDER_ACCENT": "#4a90d9",
         "ACCENT": "#4a90d9", "ACCENT_DIM": "#2a6099",
         "ACCENT_PURPLE": "#3a7acc", "ACCENT_PINK": "#66aaee",
@@ -337,6 +359,7 @@ THEME_PRESETS = {
     "Ultraviolet": {
         "BG_DARKEST": "#080808", "BG_DARK": "#111111", "BG_MODULE": "#181818",
         "BG_HEADER": "#202020", "BG_SETTINGS": "#262626", "BG_INPUT": "#0e0e0e",
+        "BG_BADGE": "#1a0e08", "BG_BADGE_ALPHA": 180,
         "BORDER": "#2e2e2e", "BORDER_ACCENT": "#ff5500",
         "ACCENT": "#ff5500", "ACCENT_DIM": "#cc3300",
         "ACCENT_PURPLE": "#ff4400", "ACCENT_PINK": "#ff7733",
@@ -352,6 +375,7 @@ THEME_PRESETS = {
     "Cobalt": {
         "BG_DARKEST": "#05080f", "BG_DARK": "#0a1020", "BG_MODULE": "#10182e",
         "BG_HEADER": "#162038", "BG_SETTINGS": "#1c2844", "BG_INPUT": "#080e1a",
+        "BG_BADGE": "#081020", "BG_BADGE_ALPHA": 180,
         "BORDER": "#1e2e4a", "BORDER_ACCENT": "#2c6be0",
         "ACCENT": "#2c6be0", "ACCENT_DIM": "#1a44aa",
         "ACCENT_PURPLE": "#2255cc", "ACCENT_PINK": "#4488ff",
@@ -367,6 +391,7 @@ THEME_PRESETS = {
     "Highlighter": {
         "BG_DARKEST": "#f5f5e0", "BG_DARK": "#fafaf0", "BG_MODULE": "#fffff5",
         "BG_HEADER": "#eeeecc", "BG_SETTINGS": "#fafae8", "BG_INPUT": "#f8f8e8",
+        "BG_BADGE": "#e8eebb", "BG_BADGE_ALPHA": 180,
         "BORDER": "#cccc44", "BORDER_ACCENT": "#aacc00",
         "ACCENT": "#88cc00", "ACCENT_DIM": "#558800",
         "ACCENT_PURPLE": "#aacc00", "ACCENT_PINK": "#ccdd00",
@@ -382,6 +407,7 @@ THEME_PRESETS = {
     "Bubblegum": {
         "BG_DARKEST": "#f5e8f0", "BG_DARK": "#fdf0f8", "BG_MODULE": "#fff5fc",
         "BG_HEADER": "#f0daea", "BG_SETTINGS": "#fdf0f8", "BG_INPUT": "#fae8f5",
+        "BG_BADGE": "#f0ccdd", "BG_BADGE_ALPHA": 180,
         "BORDER": "#ddaacc", "BORDER_ACCENT": "#ff44aa",
         "ACCENT": "#ff44aa", "ACCENT_DIM": "#cc1177",
         "ACCENT_PURPLE": "#ee22aa", "ACCENT_PINK": "#ff77cc",
@@ -418,6 +444,8 @@ class Colors:
     BG_HEADER = "#181830"
     BG_SETTINGS = "#1a1a2e"
     BG_INPUT = "#10101e"
+    BG_BADGE = "#000000" # Background for labels/badges
+    BG_BADGE_ALPHA = 180 # Default transparency for badges
     BORDER = "#252545"
     BORDER_ACCENT = "#3a3a6a"
 
@@ -487,7 +515,7 @@ def apply_theme(name: str, overrides: dict = None):
     # Baseline defaults (Midnight) to ensure we don't leak specialized colors from previous themes
     defaults = THEME_PRESETS["Midnight"]
     # Keys that are often missing in simpler themes but should reset
-    reset_keys = ["BAND_LOW", "BAND_MID", "BAND_HIGH", "HEATMAP_STOPS", "METER_LOW", "METER_MID", "METER_HIGH", "PEAK_LED", "CLIP_LED", "BORDER", "BORDER_ACCENT"]
+    reset_keys = ["BAND_LOW", "BAND_MID", "BAND_HIGH", "HEATMAP_STOPS", "METER_LOW", "METER_MID", "METER_HIGH", "PEAK_LED", "CLIP_LED", "BORDER", "BORDER_ACCENT", "BG_BADGE", "BG_BADGE_ALPHA"]
     
     # 1. Reset baseline for specific keys from Defaults
     for key in reset_keys:

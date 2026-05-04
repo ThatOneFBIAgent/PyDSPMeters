@@ -8,6 +8,7 @@ compiled native extension.
 """
 
 import numpy as np
+import logging
 
 # ── Try to import the Rust accelerator ──────────────────────────────────────
 
@@ -15,8 +16,10 @@ _HAS_NATIVE = False
 try:
     import dsp_accel as _native
     _HAS_NATIVE = True
+    logging.info("DSP Accelerator: Native Rust extension loaded.")
 except ImportError:
     _native = None
+    logging.warning("DSP Accelerator: Native extension NOT found. Using pure-Python/NumPy fallback.")
 
 
 def is_accelerated() -> bool:

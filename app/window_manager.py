@@ -5,6 +5,7 @@ module management, snapping logic, and theme switching.
 
 import math
 import time
+import logging
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QMenu, QComboBox, QPushButton, QLabel, QFrame, QApplication,
@@ -33,12 +34,37 @@ class LoadingOverlay(QWidget):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self._opacity = 1.0
+        
+        # Smoothed colors
+        self._colors = {
+            "BG_DARKEST": QColor(Colors.BG_DARKEST),
+            "ACCENT": QColor(Colors.ACCENT)
+        }
+        
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self.update)
+        self._timer.timeout.connect(self._animate)
         self._timer.start(16)
-        self._start_time = QTimer.singleShot(0, lambda: None) # Placeholder
         import time
         self._birth = time.time()
+
+    def _animate(self):
+        # Lerp colors towards current global theme
+        changed = False
+        lerp_speed = 0.05
+        for key in self._colors:
+            target = QColor(getattr(Colors, key))
+            current = self._colors[key]
+            
+            if current != target:
+                r = current.red() + (target.red() - current.red()) * lerp_speed
+                g = current.green() + (target.green() - current.green()) * lerp_speed
+                b = current.blue() + (target.blue() - current.blue()) * lerp_speed
+                # Alpha handled separately for overlay
+                self._colors[key] = QColor(int(r), int(g), int(b))
+                changed = True
+        
+        if changed or self._opacity < 1.0:
+            self.update()
 
     def paintEvent(self, event):
         from PySide6.QtGui import QPainter
@@ -46,13 +72,13 @@ class LoadingOverlay(QWidget):
             p.setRenderHint(QPainter.Antialiasing)
             
             # Background
-            bg = QColor(Colors.BG_DARKEST)
+            bg = QColor(self._colors["BG_DARKEST"])
             bg.setAlpha(int(255 * self._opacity))
             p.fillRect(self.rect(), bg)
             
             # Pulsing Logo
             pulse = (math.sin((time.time() - self._birth) * 5) + 1) * 0.5
-            text_col = QColor(Colors.ACCENT)
+            text_col = QColor(self._colors["ACCENT"])
             text_col.setAlpha(int((150 + 105 * pulse) * self._opacity))
             
             p.setPen(text_col)
@@ -318,6 +344,7 @@ class MainWindow(QMainWindow):
                 self._splash.set_progress(60 + int(30 * (i / len(module_items))), f"Loading {m_key}...")
                 QApplication.processEvents()
             
+            logging.info(f"UI: Loading module '{m_key}'")
             self.add_module(m_key, m_config)
             
         def finalize_load():
@@ -362,6 +389,8 @@ class MainWindow(QMainWindow):
             
             self._current_device = best_index
             self.audio_engine.error_occurred.connect(self._on_audio_error)
+            
+            logging.info(f"Audio: Attempting to start engine with device index {best_index}")
             self.audio_engine.start(best_index)
             self._is_ready = True
 
@@ -826,6 +855,7 @@ class MainWindow(QMainWindow):
         cls = MODULE_REGISTRY[module_key]["class"]
         module = cls(self.audio_engine)
         module.module_key = module_key # Store for saving
+        logging.info(f"Module '{module_key}' (internal: {cls.__name__}) initialized.")
         module.close_requested.connect(self.remove_module)
         module.move_requested.connect(self._move_module)
         
@@ -883,8 +913,6 @@ class MainWindow(QMainWindow):
             if module in self._modules:
                 self._modules.pop(self._modules.index(module))
                 self._modules.insert(new_idx, module)
-
-    # ── Layout Toggle ───────────────────────────────────────────────────────
 
     def _toggle_layout(self):
         self._layout_vertical = not self._layout_vertical

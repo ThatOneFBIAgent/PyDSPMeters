@@ -12,6 +12,7 @@ import ctypes
 import glob
 
 from app.theme import build_stylesheet, Colors, Fonts, apply_theme
+from app.utils.logging_utils import setup_logging, setup_global_exception_handler
 
 # --- Application Configuration ---
 # Set this to the name of your icon file. It will survive Nuitka packaging.
@@ -26,36 +27,78 @@ class CustomSplashScreen(QSplashScreen):
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
         self.setFixedSize(450, 280)
         self._progress = 0
+        self._display_progress = 0.0
         self._status = "Initializing core components..."
+        
+        # Smoothed colors for theme transitions
+        self._current_colors = {
+            "ACCENT": QColor(Colors.ACCENT),
+            "ACCENT_DIM": QColor(Colors.ACCENT_DIM),
+            "BG_DARKEST": QColor(Colors.BG_DARKEST),
+            "BORDER": QColor(Colors.BORDER)
+        }
         
         # Center on screen
         screen = QApplication.primaryScreen().geometry()
         self.move(screen.center() - self.rect().center())
         
+        # Animation timer
+        self._timer = QTimer(self)
+        self._timer.setInterval(16) # ~60fps
+        self._timer.timeout.connect(self._animate)
+        self._timer.start()
+        
     def set_progress(self, val, status=None):
         self._progress = val
         if status:
             self._status = status
-        self.update()
+
+    def _animate(self):
+        # Lerp progress
+        diff = self._progress - self._display_progress
+        if abs(diff) > 0.1:
+            self._display_progress += diff * 0.1
+        else:
+            self._display_progress = float(self._progress)
+            
+        # Lerp colors towards current global theme
+        changed = False
+        lerp_speed = 0.05
+        for key in self._current_colors:
+            target = QColor(getattr(Colors, key))
+            current = self._current_colors[key]
+            
+            if current != target:
+                r = current.red() + (target.red() - current.red()) * lerp_speed
+                g = current.green() + (target.green() - current.green()) * lerp_speed
+                b = current.blue() + (target.blue() - current.blue()) * lerp_speed
+                a = current.alpha() + (target.alpha() - current.alpha()) * lerp_speed
+                self._current_colors[key] = QColor(int(r), int(g), int(b), int(a))
+                changed = True
+        
+        if changed or abs(diff) > 0.01:
+            self.update()
 
     def paintEvent(self, event):
         with QPainter(self) as p:
             p.setRenderHint(QPainter.Antialiasing)
             
+            c = self._current_colors
+            
             # Draw background gradient
             rect = self.rect()
             bg_grad = QLinearGradient(rect.topLeft(), rect.bottomRight())
-            bg_grad.setColorAt(0, QColor(Colors.BG_DARKEST))
-            bg_grad.setColorAt(1, QColor("#0c0c1a")) # Slightly lighter corner
+            bg_grad.setColorAt(0, c["BG_DARKEST"])
+            bg_grad.setColorAt(1, c["BG_DARKEST"].lighter(110))
             p.fillRect(rect, bg_grad)
             
             # Subtle accent glow / border
-            p.setPen(QPen(QColor(Colors.BORDER), 1))
+            p.setPen(QPen(c["BORDER"], 1))
             p.drawRect(rect.adjusted(0, 0, -1, -1))
             
             # Glow behind logo
             glow = QLinearGradient(rect.center() - QPoint(180, 0), rect.center() + QPoint(180, 0))
-            glow_col = QColor(Colors.ACCENT)
+            glow_col = QColor(c["ACCENT"])
             glow_col.setAlpha(35)
             glow.setColorAt(0, Qt.transparent)
             glow.setColorAt(0.5, glow_col)
@@ -63,7 +106,7 @@ class CustomSplashScreen(QSplashScreen):
             p.fillRect(rect.adjusted(0, 105, 0, -115), glow)
 
             # Logo Text
-            p.setPen(QColor(Colors.ACCENT))
+            p.setPen(c["ACCENT"])
             f = Fonts.header()
             f.setPointSize(32)
             f.setLetterSpacing(QFont.AbsoluteSpacing, 4)
@@ -99,16 +142,20 @@ class CustomSplashScreen(QSplashScreen):
             p.drawRoundedRect(bar_rect, 3, 3)
             
             # Progress bar fill
-            if self._progress > 0:
-                progress_rect = QRectF(50, 230, 350 * (self._progress / 100), 6)
+            if self._display_progress > 0:
+                progress_rect = QRectF(50, 230, 350 * (self._display_progress / 100), 6)
                 grad = QLinearGradient(progress_rect.topLeft(), progress_rect.topRight())
-                grad.setColorAt(0, QColor(Colors.ACCENT_DIM))
-                grad.setColorAt(1, QColor(Colors.ACCENT))
+                grad.setColorAt(0, c["ACCENT_DIM"])
+                grad.setColorAt(1, c["ACCENT"])
                 p.setBrush(grad)
                 p.drawRoundedRect(progress_rect, 3, 3)
 
 
 def main():
+    # Initialize Logging and Global Exception Handling as early as possible
+    setup_logging()
+    setup_global_exception_handler()
+
     # Handle Ctrl+C (SIGINT)
     import signal, sys
     signal.signal(signal.SIGINT, signal.SIG_DFL)

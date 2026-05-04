@@ -5,6 +5,7 @@ Uses sounddevice for low-latency capture with a thread-safe queue bridge to Qt.
 
 import sys
 import queue
+import logging
 import numpy as np
 import sounddevice as sd
 from app.dsp import accel as dsp_accel
@@ -91,6 +92,7 @@ class AudioEngine(QObject):
 
     def start(self, device_index: int | None = None, channels: int | None = None):
         """Start capturing audio from the given device."""
+        logging.info(f"Starting AudioEngine: device={device_index}, channels={channels}")
         self.stop()
         self._device = device_index
         old_ch = self.channels
@@ -103,6 +105,9 @@ class AudioEngine(QObject):
             info = sd.query_devices(device_index, "input")
             max_ch = info.get("max_input_channels", 2)
             dev_sr = info.get("default_samplerate", 44100)
+            host_api = sd.query_hostapis(info["hostapi"])["name"]
+            
+            logging.info(f"Targeting device: '{info['name']}' | HostAPI: {host_api} | Max Channels: {max_ch}")
             
             if channels is not None:
                 self.channels = min(channels, max_ch, 2)
@@ -141,6 +146,7 @@ class AudioEngine(QObject):
                 self._stream.start()
                 self.sample_rate = sr
                 self._poll_timer.start()
+                logging.info(f"Stream started successfully at {sr}Hz, {self.channels}ch")
                 self.stream_started.emit()
                 return
             except Exception as e:
@@ -161,6 +167,7 @@ class AudioEngine(QObject):
                     self._stream.start()
                     self.sample_rate = sr
                     self._poll_timer.start()
+                    logging.info(f"Stream started with fallback (native channels): {max_ch}ch at {sr}Hz")
                     self.stream_started.emit()
                     return
                 except:
@@ -190,7 +197,9 @@ class AudioEngine(QObject):
             self._poll_timer.start()
             self.stream_started.emit()
         except Exception as e2:
-            self.error_occurred.emit(f"Audio error: {last_err or e2}")
+            err_msg = f"Audio error: {last_err or e2}"
+            logging.error(err_msg)
+            self.error_occurred.emit(err_msg)
 
     def stop(self):
         """Stop the audio stream (non-blocking)."""

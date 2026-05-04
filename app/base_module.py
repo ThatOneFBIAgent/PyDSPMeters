@@ -198,7 +198,8 @@ class BaseModule(QWidget):
     def draw_text_badge(painter, rect, align, text, text_pen, bg_color=None):
         """Draws text with a rounded, padded background for readability."""
         if bg_color is None:
-            bg_color = QColor(0, 0, 0, 150)
+            # Use theme color and alpha
+            bg_color = Colors.with_alpha(Colors.BG_BADGE, getattr(Colors, "BG_BADGE_ALPHA", 180))
             
         from PySide6.QtGui import QFontMetrics
         fm = QFontMetrics(painter.font())
