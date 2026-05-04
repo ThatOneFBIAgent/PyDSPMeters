@@ -98,16 +98,23 @@ class OscilloscopeModule(BaseModule):
             self._waveform_r[-n:] = r
 
     def _find_trigger(self, data):
-        # Use NumPy for faster zero-crossing detection
+        """Find zero-crossing trigger point with sub-sample interpolation."""
         search_limit = len(data) - self._display_samples
         if search_limit <= 0: return 0
         
-        # Look for zero crossing in the first half of the buffer
+        # Look for positive-going zero crossing
         subset = data[:search_limit]
         crossings = np.where((subset[:-1] <= 0) & (subset[1:] > 0))[0]
+        
         if len(crossings) > 0:
-            return crossings[0]
-        return 0
+            idx = crossings[0]
+            # Simple linear interpolation for sub-sample trigger precision
+            y0, y1 = subset[idx], subset[idx+1]
+            if abs(y1 - y0) > 1e-6:
+                frac = -y0 / (y1 - y0)
+                return idx + frac
+            return float(idx)
+        return 0.0
 
     def _get_channels(self):
         l, r = self._waveform_l, self._waveform_r
@@ -227,7 +234,11 @@ class OscilloscopeModule(BaseModule):
 
     def _draw_trace(self, painter, ch, w, h, center, factor, color, vertical=False):
         trig = self._find_trigger(ch)
-        seg = ch[trig:trig + self._display_samples]
+        
+        # Use fractional interpolation for the display segment
+        t_indices = np.linspace(trig, trig + self._display_samples, self._display_samples, endpoint=False)
+        seg = np.interp(t_indices, np.arange(len(ch)), ch)
+        
         if len(seg) < 2: return
         
         # Determine number of points based on the long axis

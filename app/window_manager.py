@@ -366,8 +366,7 @@ class MainWindow(QMainWindow):
             
             # Restore appbar after window is fully laid out
             if getattr(self, "_appbar_saved", False):
-                self._appbar_active = True
-                QTimer.singleShot(300, self._apply_appbar)
+                self._toggle_appbar(True)
                     
         QTimer.singleShot(250, finalize_load)
 
@@ -699,9 +698,24 @@ class MainWindow(QMainWindow):
     def _toggle_appbar(self, checked):
         self._appbar_active = checked
         if checked:
-            self._apply_appbar()
+            # Need a slight delay to ensure window is mapped and geometry is stable
+            QTimer.singleShot(300, self._apply_appbar)
         else:
             self._release_appbar()
+            
+        self._update_appbar_ui()
+
+    def _update_appbar_ui(self):
+        """Sync UI components with AppBar state."""
+        is_docked = getattr(self, "_appbar_active", False)
+        
+        # Lock/Unlock layout button
+        self.title_bar.layout_btn.setEnabled(not is_docked)
+        
+        if is_docked:
+            self.title_bar.layout_btn.setToolTip("Layout locked while docked to edge")
+        else:
+            self._update_layout_tooltip()
 
     def _set_appbar_edge(self, edge):
         self._appbar_edge = edge
@@ -777,6 +791,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[AppBar] Failed to dock (Win32): {e}")
             self._appbar_active = False
+            self._update_appbar_ui()
 
     def _apply_appbar_linux(self, rect):
         import subprocess
@@ -915,6 +930,9 @@ class MainWindow(QMainWindow):
                 self._modules.insert(new_idx, module)
 
     def _toggle_layout(self):
+        if getattr(self, "_appbar_active", False):
+            return
+            
         self._layout_vertical = not self._layout_vertical
         if self._layout_vertical:
             self.splitter.setOrientation(Qt.Vertical)
@@ -923,6 +941,12 @@ class MainWindow(QMainWindow):
         else:
             self.splitter.setOrientation(Qt.Horizontal)
             self.title_bar.layout_btn.setText("▤")
+            self.title_bar.layout_btn.setToolTip("Switch to Vertical layout")
+            
+    def _update_layout_tooltip(self):
+        if self._layout_vertical:
+            self.title_bar.layout_btn.setToolTip("Switch to Horizontal layout")
+        else:
             self.title_bar.layout_btn.setToolTip("Switch to Vertical layout")
             
         # Refresh divider style to update margins and respect opacity

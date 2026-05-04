@@ -11,19 +11,20 @@ from app.dsp import accel as dsp_accel
 def design_k_weighting(sample_rate: float) -> np.ndarray:
     """
     Design K-weighting filter as second-order sections (SOS).
-    K-weighting per ITU-R BS.1770:
-      Stage 1: High-shelf boost (~+4 dB above 1.5 kHz)
-      Stage 2: High-pass filter (~38 Hz, -3 dB)
+    K-weighting per ITU-R BS.1770-4:
+      Stage 1: High-shelf boost (~+4 dB, f0 ≈ 1682 Hz)
+      Stage 2: High-pass filter (f0 ≈ 38 Hz)
 
     Returns:
         SOS array suitable for scipy.signal.sosfilt.
     """
-    # Stage 1: High shelf via peaking EQ approximation
-    # Using a high-shelf with ~4dB gain above 1500 Hz
-    f0 = 1500.0
-    Q = 0.7071
-    gain_db = 4.0
-    A = 10 ** (gain_db / 40.0)
+    # Stage 1: High shelf
+    # Official coefficients derived for 48kHz, but we recalculate for sample_rate
+    f0 = 1681.97445095229
+    G = 3.999843853973347
+    Q = 0.7071752369554193
+    
+    A = 10 ** (G / 40.0)
     w0 = 2 * np.pi * f0 / sample_rate
     alpha = np.sin(w0) / (2 * Q)
 
@@ -36,8 +37,21 @@ def design_k_weighting(sample_rate: float) -> np.ndarray:
 
     sos_shelf = np.array([[b0 / a0, b1 / a0, b2 / a0, 1.0, a1 / a0, a2 / a0]])
 
-    # Stage 2: High-pass Butterworth at 38 Hz
-    sos_hp = butter(2, 38.0, btype='high', fs=sample_rate, output='sos')
+    # Stage 2: High-pass (Recalculated for better BS.1770 matching)
+    f0_hp = 38.13547087602444
+    Q_hp = 0.5003270373253902 # Not 0.707 for BS.1770
+    
+    w0_hp = 2 * np.pi * f0_hp / sample_rate
+    alpha_hp = np.sin(w0_hp) / (2 * Q_hp)
+    
+    b0_hp = (1 + np.cos(w0_hp)) / 2
+    b1_hp = -(1 + np.cos(w0_hp))
+    b2_hp = (1 + np.cos(w0_hp)) / 2
+    a0_hp = 1 + alpha_hp
+    a1_hp = -2 * np.cos(w0_hp)
+    a2_hp = 1 - alpha_hp
+    
+    sos_hp = np.array([[b0_hp / a0_hp, b1_hp / a0_hp, b2_hp / a0_hp, 1.0, a1_hp / a0_hp, a2_hp / a0_hp]])
 
     return np.vstack([sos_shelf, sos_hp])
 
@@ -58,7 +72,7 @@ class LoudnessMeter:
         self.channels = channels
         self._sos = design_k_weighting(sample_rate)
 
-        # Filter state for each channel (for streaming)
+        # Filter state for each channel
         self._zi = [np.zeros((self._sos.shape[0], 2)) for _ in range(channels)]
 
         # Rolling buffers
@@ -66,19 +80,18 @@ class LoudnessMeter:
         self._shortterm_samples = int(3.0 * sample_rate)  # 3 s
 
         self._buffer = np.zeros((self._shortterm_samples, channels), dtype=np.float64)
+        self._raw_buffer = np.zeros((self._shortterm_samples, channels), dtype=np.float64)
         self._buf_pos = 0
         self._buf_filled = 0
 
-        # Raw (unfiltered) buffers for RMS
-        self._raw_buffer = np.zeros((self._shortterm_samples, channels), dtype=np.float64)
+        # Gated Integrated Loudness state
+        self._integrated_blocks = [] # List of 400ms (75% overlap) mean square values
+        self._int_block_size = int(0.4 * sample_rate)
+        self._int_step_size = int(0.1 * sample_rate) # 75% overlap
+        self._int_accum_samples = 0
 
     def process(self, data: np.ndarray):
-        """
-        Feed new audio data into the meter.
-
-        Args:
-            data: Shape (n_samples, channels), float32/64.
-        """
+        """Feed new audio data into the meter."""
         if data.ndim == 1:
             data = data[:, np.newaxis]
         n = data.shape[0]
@@ -91,12 +104,31 @@ class LoudnessMeter:
                 self._sos, data[:, c].astype(np.float64), zi=self._zi[c]
             )
 
-        # Write to circular buffers (accelerated bulk write)
+        # Write to circular buffers
         self._buf_pos = dsp_accel.circular_buffer_write(
             self._buffer, self._raw_buffer, filtered, 
             data[:, :ch].astype(np.float64), self._buf_pos
         )
         self._buf_filled = min(self._buf_filled + n, self._shortterm_samples)
+
+        # Integrated Accumulation
+        self._int_accum_samples += n
+        if self._int_accum_samples >= self._int_step_size:
+            self._update_integrated_blocks()
+            self._int_accum_samples %= self._int_step_size
+
+    def _update_integrated_blocks(self):
+        """Calculate mean square for the last 400ms and store for gated average."""
+        ms = self._mean_square_lufs(self._int_block_size)
+        if ms > 0:
+            self._integrated_blocks.append(ms)
+            # Keep history to ~1 hour to prevent memory leaks
+            if len(self._integrated_blocks) > 36000: # 1 hour at 0.1s steps
+                self._integrated_blocks.pop(0)
+
+    def reset_integrated(self):
+        """Reset the integrated loudness calculation."""
+        self._integrated_blocks = []
 
     def _get_last_n(self, buf: np.ndarray, n_samples: int) -> np.ndarray:
         """Extract last n_samples from circular buffer."""
@@ -113,7 +145,7 @@ class LoudnessMeter:
         """Compute mean square of K-weighted signal over window."""
         segment = self._get_last_n(self._buffer, n_samples)
         ms_per_ch = np.mean(segment ** 2, axis=0)
-        # Channel weights: 1.0 for L/R (stereo)
+        # ITU-R BS.1770 weights: 1.0 for main channels, 1.41 for surrounds (not implemented)
         return float(np.sum(ms_per_ch))
 
     def _rms_db(self, n_samples: int) -> float:
@@ -139,6 +171,29 @@ class LoudnessMeter:
         if ms < 1e-20:
             return -120.0
         return -0.691 + 10.0 * np.log10(ms)
+
+    @property
+    def lufs_integrated(self) -> float:
+        """Gated Integrated Loudness per ITU-R BS.1770-4."""
+        if not self._integrated_blocks:
+            return -120.0
+        
+        blocks = np.array(self._integrated_blocks)
+        # 1. Absolute Threshold (-70 LUFS)
+        abs_thresh = 10**((-70 + 0.691) / 10.0)
+        indices = np.where(blocks > abs_thresh)[0]
+        if len(indices) == 0: return -120.0
+        
+        # 2. Relative Threshold (-10 LU relative to absolute-gated average)
+        gated_abs = blocks[indices]
+        avg_abs = np.mean(gated_abs)
+        rel_thresh = avg_abs * (10**(-10/10.0))
+        
+        indices_rel = np.where(gated_abs > rel_thresh)[0]
+        if len(indices_rel) == 0: return -120.0
+        
+        final_avg = np.mean(gated_abs[indices_rel])
+        return -0.691 + 10.0 * np.log10(final_avg)
 
     @property
     def lufs_momentary_channels(self) -> np.ndarray:
@@ -176,15 +231,27 @@ class LoudnessMeter:
 
     @property
     def true_peak(self) -> float:
-        """True peak of the most recent buffer content in dBFS."""
-        segment = self._get_last_n(self._raw_buffer, self._momentary_samples)
-        peak = np.max(np.abs(segment))
-        if peak < 1e-20:
-            return -120.0
-        return float(20.0 * np.log10(peak))
+        """True peak (oversampled) of the most recent buffer content in dBTP."""
+        segment = self._get_last_n(self._raw_buffer, int(self.sample_rate * 0.1)) # 100ms window
+        return float(np.max(self._calculate_tp_channels(segment)))
 
     @property
     def true_peak_channels(self) -> np.ndarray:
-        segment = self._get_last_n(self._raw_buffer, self._momentary_samples)
-        peaks = np.max(np.abs(segment), axis=0)
-        return 20.0 * np.log10(np.clip(peaks, 1e-6, None))
+        segment = self._get_last_n(self._raw_buffer, int(self.sample_rate * 0.1))
+        return self._calculate_tp_channels(segment)
+
+    def _calculate_tp_channels(self, data: np.ndarray) -> np.ndarray:
+        """Estimate True Peak via 4x oversampling."""
+        if len(data) < 16:
+            return np.zeros(data.shape[1]) - 120.0
+        
+        try:
+            from scipy.signal import resample_poly
+            # 4x oversampling is standard for 'true peak' estimation
+            up = resample_poly(data, 4, 1, axis=0)
+            peaks = np.max(np.abs(up), axis=0)
+            return 20.0 * np.log10(np.clip(peaks, 1e-6, None))
+        except:
+            # Fallback to sample peak if scipy is having issues
+            peaks = np.max(np.abs(data), axis=0)
+            return 20.0 * np.log10(np.clip(peaks, 1e-6, None))

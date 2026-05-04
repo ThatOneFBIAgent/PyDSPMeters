@@ -408,7 +408,7 @@ fn compute_fft<'py>(
     let out_size = fft_size / 2 + 1;
     let mut mag_db = vec![0.0f32; out_size];
     
-    let norm = fft_size as f32 / 2.0;
+    let norm = fft_size as f32 / 4.0;
     
     for i in 0..out_size {
         let mag = (buffer[i].re * buffer[i].re + buffer[i].im * buffer[i].im).sqrt();

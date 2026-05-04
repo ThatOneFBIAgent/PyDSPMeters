@@ -219,10 +219,10 @@ class StereometerModule(BaseModule):
                 cols = [Colors.BAND_LOW, Colors.BAND_MID, Colors.BAND_HIGH]
                 
             for bl, br, col in zip([low_l, mid_l, high_l], [low_r, mid_r, high_r], cols):
-                self._draw_dots(painter, bl, br, cx, cy, radius, QColor(col), 100)
+                self._draw_trace(painter, bl, br, cx, cy, radius, QColor(col), 100)
         else:
             col = QColor(Colors.ACCENT)
-            self._draw_dots(painter, left, right, cx, cy, radius, col, 160)
+            self._draw_trace(painter, left, right, cx, cy, radius, col, 160)
 
         # Correlation bar
         if not self._minimal_mode:
@@ -257,36 +257,34 @@ class StereometerModule(BaseModule):
             painter.setFont(self.get_responsive_font(Fonts.small, 20, inner_h, "+1"))
             painter.drawText(QRectF(margin + bar_w - 16, bar_y - 1, 20, inner_h), Qt.AlignVCenter, "+1")
 
-    def _draw_dots(self, painter, left, right, cx, cy, radius, color, alpha):
+    def _draw_trace(self, painter, left, right, cx, cy, radius, color, alpha):
         n = len(left)
-        step = max(1, n // 1000)
+        # Optimized sample density
+        step = max(1, n // 1024)
         
-        # Vectorized coordinate calculation
-        l_seg = left[::step]
-        r_seg = right[::step]
-        
-        # Apply zoom to segments
-        l_seg = l_seg * self._zoom
-        r_seg = r_seg * self._zoom
+        l_seg = left[::step] * self._zoom
+        r_seg = right[::step] * self._zoom
 
         if self._display_mode == "Vectorscope":
-            # Rotated M/S view (Standard Vectorscope)
+            # 1. Vectorscope (Point Cloud) - Shows Stereo Density
+            # Best for seeing balance and "weight" without polyline clutter.
             xs = cx + (l_seg - r_seg) * 0.5 * radius
             ys = cy - (l_seg + r_seg) * 0.5 * radius
+            
+            points = [QPointF(xs[i], ys[i]) for i in range(len(xs))]
+            if not points: return
+            
+            painter.setPen(QPen(QColor(color) if color else QColor(Colors.ACCENT), 1.0))
+            painter.drawPoints(points)
+            
         else:
-            # Raw L/R view (True Lissajous math curve)
+            # 2. Lissajous (Polyline) - Shows Phase Curves
+            # Best for seeing trajectories and "fancy curves" of pure tones.
             xs = cx + r_seg * radius
             ys = cy - l_seg * radius
-        
-        points = [QPointF(xs[i], ys[i]) for i in range(len(xs))]
-
-        if not points:
-            return
-
-        if color is None:
-            painter.setPen(QPen(QColor(Colors.ACCENT), 1.5))
-        else:
-            dc = QColor(color); dc.setAlpha(alpha)
-            painter.setPen(QPen(dc, 1.5))
-        
-        painter.drawPoints(points)
+            
+            points = [QPointF(xs[i], ys[i]) for i in range(len(xs))]
+            if len(points) < 2: return
+            
+            painter.setPen(QPen(QColor(color) if color else QColor(Colors.ACCENT), 1.0))
+            painter.drawPolyline(points)

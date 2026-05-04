@@ -243,6 +243,10 @@ def compute_fft(data, window, fft_size):
     from scipy.fft import rfft
     spectrum = rfft(windowed)
     magnitude = np.abs(spectrum)
-    magnitude = magnitude / (fft_size / 2)
+    # Correct normalization for windowed real FFT: 
+    # Standard: magnitude * 2 / sum(window)
+    # For Hann window, sum(window) is approx fft_size / 2.
+    # So: magnitude * 2 / (fft_size / 2) = magnitude * 4 / fft_size
+    magnitude = magnitude / (fft_size / 4)
     magnitude = np.clip(magnitude, 1e-10, None)
     return 20.0 * np.log10(magnitude)
