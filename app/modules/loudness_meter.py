@@ -256,6 +256,7 @@ class LoudnessModule(BaseModule):
             "show_momentary": self._show_momentary,
             "show_shortterm": self._show_shortterm,
             "show_peak": self._show_peak,
+            "show_integrated": self._show_integrated,
             "show_all_channels": self._show_all_channels,
             "show_labels": self._show_labels,
             "show_mode_indicator": self._show_mode_indicator,
@@ -267,17 +268,18 @@ class LoudnessModule(BaseModule):
     def apply_settings(self, settings):
         self._mode = settings.get("mode", self._mode)
         self.header.set_title(f"Loudness · {self._mode}")
-        self._orientation = settings.get("orientation", getattr(self, "_orientation", "Auto"))
+        self._orientation = settings.get("orientation", self._orientation)
         self._reactivity = settings.get("reactivity", self._reactivity)
         self._show_momentary = settings.get("show_momentary", self._show_momentary)
         self._show_shortterm = settings.get("show_shortterm", self._show_shortterm)
         self._show_peak = settings.get("show_peak", self._show_peak)
+        self._show_integrated = settings.get("show_integrated", self._show_integrated)
         self._show_all_channels = settings.get("show_all_channels", self._show_all_channels)
-        self._show_labels = settings.get("show_labels", True)
-        self._show_mode_indicator = settings.get("show_mode_indicator", True)
-        self._show_follow_badge = settings.get("show_follow_badge", True)
-        self._show_scale = settings.get("show_scale", True)
-        self._show_value_badges = settings.get("show_value_badges", True)
+        self._show_labels = settings.get("show_labels", self._show_labels)
+        self._show_mode_indicator = settings.get("show_mode_indicator", self._show_mode_indicator)
+        self._show_follow_badge = settings.get("show_follow_badge", self._show_follow_badge)
+        self._show_scale = settings.get("show_scale", getattr(self, "_show_scale", True))
+        self._show_value_badges = settings.get("show_value_badges", getattr(self, "_show_value_badges", True))
 
     def _mode_scale(self):
         """Return (db_min, db_max) appropriate for the current mode."""

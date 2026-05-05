@@ -11,7 +11,7 @@ from app.modules import register_module
 from app.theme import Colors, Fonts
 from app.dsp.fft import (
     compute_fft, fft_frequencies, map_frequencies_to_pixels,
-    detect_peak_frequency, hz_to_note_name,
+    detect_peak_frequency, hz_to_note_name, apply_tilt,
 )
 
 
@@ -38,6 +38,7 @@ class SpectrumModule(BaseModule):
         self._smooth_peak_db = -120.0
         self._peak_history = []
         self._speed = 1.0
+        self._tilt = 4.5  # dB/octave tilt for balance
         self.module_key = "spectrum"
         super().__init__(audio_engine, title="Spectrum", parent=parent)
         self.canvas.set_render_func(self._render)
@@ -52,7 +53,8 @@ class SpectrumModule(BaseModule):
             "smoothing": self._smoothing,
             "show_note": self._show_note,
             "show_floating_note": self._show_floating_note,
-            "speed": self._speed
+            "speed": self._speed,
+            "tilt": self._tilt
         }
 
     def apply_settings(self, settings):
@@ -65,6 +67,7 @@ class SpectrumModule(BaseModule):
         self._show_note = settings.get("show_note", self._show_note)
         self._show_floating_note = settings.get("show_floating_note", self._show_floating_note)
         self._speed = float(settings.get("speed", self._speed))
+        self._tilt = float(settings.get("tilt", self._tilt))
 
     def build_context_menu(self, menu):
         from PySide6.QtGui import QActionGroup
@@ -131,6 +134,15 @@ class SpectrumModule(BaseModule):
             a.setChecked(abs(sm_val/100.0 - self._smoothing) < 0.01)
             a.triggered.connect(lambda checked, v=sm_val: setattr(self, "_smoothing", v / 100.0))
             sg.addAction(a)
+            
+        tm = menu.addMenu("Slope (Tilt)")
+        tg = QActionGroup(self)
+        for t_val in [0.0, 1.5, 3.0, 4.5, 6.0]:
+            a = tm.addAction(f"{t_val} dB")
+            a.setCheckable(True)
+            a.setChecked(abs(t_val - self._tilt) < 0.1)
+            a.triggered.connect(lambda checked, v=t_val: setattr(self, "_tilt", v))
+            tg.addAction(a)
 
         a = menu.addAction("dB/Hz/Note Info")
         a.setCheckable(True)
@@ -184,6 +196,9 @@ class SpectrumModule(BaseModule):
         n_steps = int(self._speed)
         step_size = n // n_steps if n_steps > 1 else n
         
+        freqs_temp = fft_frequencies(self._fft_size, self.audio_engine.sample_rate)
+        a = 1.0 - self._smoothing
+        
         for s in range(n_steps):
             offset = (n_steps - 1 - s) * step_size
             start_idx = len(self._acc_buf_l) - self._fft_size - offset
@@ -196,8 +211,9 @@ class SpectrumModule(BaseModule):
                 seg_l = np.pad(seg_l, (self._fft_size - len(seg_l), 0))
             
             mag_l = compute_fft(seg_l, self._fft_size)
+            mag_l = apply_tilt(mag_l, freqs_temp, self._tilt)
+            
             nb = min(len(mag_l), len(self._smoothed_l))
-            a = 1.0 - self._smoothing
             self._smoothed_l[:nb] = self._smoothed_l[:nb] * self._smoothing + mag_l[:nb] * a
             
             if is_stereo:
@@ -205,6 +221,7 @@ class SpectrumModule(BaseModule):
                 if len(seg_r) < self._fft_size:
                     seg_r = np.pad(seg_r, (self._fft_size - len(seg_r), 0))
                 mag_r = compute_fft(seg_r, self._fft_size)
+                mag_r = apply_tilt(mag_r, freqs_temp, self._tilt)
                 self._smoothed_r[:nb] = self._smoothed_r[:nb] * self._smoothing + mag_r[:nb] * a
             else:
                 self._smoothed_r[:nb] = self._smoothed_l[:nb]

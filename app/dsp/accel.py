@@ -120,14 +120,28 @@ def circular_buffer_write(buffer, raw_buffer, filtered, raw_data, buf_pos):
     if _HAS_NATIVE:
         return _native.circular_buffer_write(buffer, raw_buffer, filtered, raw_data, buf_pos)
     
-    # Pure Python fallback
+    # Pure Python fallback: Vectorized slicing for speed
     buf_len = len(buffer)
     n = len(filtered)
     ch = min(buffer.shape[1], filtered.shape[1])
-    for i in range(n):
-        pos = (buf_pos + i) % buf_len
-        buffer[pos, :ch] = filtered[i, :ch]
-        raw_buffer[pos, :ch] = raw_data[i, :ch]
+    
+    # Calculate indices for the circular buffer wrap-around
+    # Number of samples that fit before the end of the buffer
+    space_left = buf_len - buf_pos
+    
+    if n <= space_left:
+        # Fits in one block
+        buffer[buf_pos : buf_pos + n, :ch] = filtered[:, :ch]
+        raw_buffer[buf_pos : buf_pos + n, :ch] = raw_data[:, :ch]
+    else:
+        # Wrap-around: fill to end, then start from beginning
+        buffer[buf_pos : buf_len, :ch] = filtered[:space_left, :ch]
+        raw_buffer[buf_pos : buf_len, :ch] = raw_data[:space_left, :ch]
+        
+        rem = n - space_left
+        buffer[0 : rem, :ch] = filtered[space_left : n, :ch]
+        raw_buffer[0 : rem, :ch] = raw_data[space_left : n, :ch]
+        
     return (buf_pos + n) % buf_len
 
 

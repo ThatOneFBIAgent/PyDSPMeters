@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QSizePolicy, QComboBox, QSlider, QCheckBox,
 )
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QTimer
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QIcon
 
 from app.theme import Colors, Fonts
@@ -56,6 +56,9 @@ class ModuleHeader(QFrame):
             QPushButton:hover {{ color: {Colors.RED}; }}
         """)
 
+    def set_move_mode(self, enabled: bool, vertical: bool = True):
+        self._close_btn.setVisible(not enabled)
+
     def set_title(self, title: str):
         self._title.setText(title)
 
@@ -92,7 +95,90 @@ class RenderCanvas(QWidget):
             except Exception:
                 import traceback
                 traceback.print_exc()
+        
+        # Move Mode Overlay
+        if getattr(self.parent(), "_move_mode", False):
+            painter.setBrush(QColor(0, 0, 0, 160))
+            painter.setPen(Qt.NoPen)
+            painter.drawRect(self.rect())
+            
+            # Dynamic Arrow Scaling & Positioning
+            # Match arrows to layout: Vertical Splitter -> Up/Down, Horizontal -> Left/Right
+            # RenderCanvas -> BaseModule -> QSplitter
+            splitter = self.parent().parentWidget()
+            from PySide6.QtWidgets import QSplitter
+            is_vert_splitter = True
+            if isinstance(splitter, QSplitter):
+                is_vert_splitter = splitter.orientation() == Qt.Vertical
+            
+            accent = QColor(Colors.ACCENT)
+            accent.setAlpha(180)
+            painter.setBrush(accent)
+            
+            from PySide6.QtGui import QPolygonF
+            from PySide6.QtCore import QPointF
+            
+            if is_vert_splitter:
+                # Up/Down arrows
+                asize = max(8, min(20, (h - 20) // 3))
+                # Draw subtle drop shadow/glow
+                painter.setBrush(QColor(0, 0, 0, 100))
+                painter.drawPolygon(QPolygonF([QPointF(w/2, 6), QPointF(w/2-asize, 6+asize), QPointF(w/2+asize, 6+asize)]))
+                painter.drawPolygon(QPolygonF([QPointF(w/2, h-4), QPointF(w/2-asize, h-4-asize), QPointF(w/2+asize, h-4-asize)]))
+                
+                painter.setBrush(accent)
+                # Up
+                painter.drawPolygon(QPolygonF([QPointF(w/2, 5), QPointF(w/2-asize, 5+asize), QPointF(w/2+asize, 5+asize)]))
+                # Down
+                painter.drawPolygon(QPolygonF([QPointF(w/2, h-5), QPointF(w/2-asize, h-5-asize), QPointF(w/2+asize, h-5-asize)]))
+            else:
+                # Left/Right arrows
+                asize = max(8, min(20, (w - 20) // 3))
+                # Shadow
+                painter.setBrush(QColor(0, 0, 0, 100))
+                painter.drawPolygon(QPolygonF([QPointF(6, h/2), QPointF(6+asize, h/2-asize), QPointF(6+asize, h/2+asize)]))
+                painter.drawPolygon(QPolygonF([QPointF(w-4, h/2), QPointF(w-4-asize, h/2-asize), QPointF(w-4-asize, h/2+asize)]))
+                
+                painter.setBrush(accent)
+                # Left
+                painter.drawPolygon(QPolygonF([QPointF(5, h/2), QPointF(5+asize, h/2-asize), QPointF(5+asize, h/2+asize)]))
+                # Right
+                painter.drawPolygon(QPolygonF([QPointF(w-5, h/2), QPointF(w-5-asize, h/2-asize), QPointF(w-5-asize, h/2+asize)]))
+
+            # Responsive Text
+            center_w = w - (asize*2 + 15) if not is_vert_splitter else w
+            center_h = h - (asize*2 + 15) if is_vert_splitter else h
+            if center_w > 30 and center_h > 30:
+                painter.setPen(QColor(Colors.TEXT))
+                msg = "MOVE MODE\nDouble-Click to Finish"
+                painter.setFont(BaseModule.get_responsive_font(Fonts.header, center_w, center_h, msg))
+                painter.drawText(self.rect(), Qt.AlignCenter, msg)
+            
         painter.end()
+
+    def mousePressEvent(self, event):
+        if getattr(self.parent(), "_move_mode", False):
+            w, h = self.width(), self.height()
+            splitter = self.parent().parentWidget()
+            from PySide6.QtWidgets import QSplitter
+            if isinstance(splitter, QSplitter) and splitter.orientation() == Qt.Vertical:
+                if event.y() < h / 2:
+                    self.parent().move_requested.emit(self.parent(), -1)
+                else:
+                    self.parent().move_requested.emit(self.parent(), 1)
+            else:
+                if event.x() < w / 2:
+                    self.parent().move_requested.emit(self.parent(), -1)
+                else:
+                    self.parent().move_requested.emit(self.parent(), 1)
+            return
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if getattr(self.parent(), "_move_mode", False):
+            self.parent().move_mode_exit_requested.emit()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 class BaseModule(QWidget):
@@ -102,12 +188,14 @@ class BaseModule(QWidget):
 
     close_requested = Signal(object)  # emits self
     move_requested = Signal(object, int)  # emits self, direction (-1 or 1)
+    move_mode_exit_requested = Signal()
 
     def __init__(self, audio_engine, title: str = "Module", parent=None):
         super().__init__(parent)
         self.audio_engine = audio_engine
         self._title = title
         self.setObjectName("baseModule")
+        self._move_mode = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -133,6 +221,16 @@ class BaseModule(QWidget):
         self.setStyleSheet(f"#baseModule {{ background: {Colors.BG_DARK}; border: 1px solid {Colors.BORDER}; border-radius: 4px; }}")
         if hasattr(self, "header"):
             self.header.update_theme()
+            
+    def set_move_mode(self, enabled: bool):
+        self._move_mode = enabled
+        self.header.set_move_mode(enabled)
+        self.canvas.update()
+
+    def mouseDoubleClickEvent(self, event):
+        if self._move_mode:
+            self.move_mode_exit_requested.emit()
+        super().mouseDoubleClickEvent(event)
 
     @staticmethod
     def get_responsive_font(font_func, w=None, h=None, text=None, min_size=5):
@@ -250,6 +348,12 @@ class BaseModule(QWidget):
             right_act = move_menu.addAction("→ Move Right")
             right_act.triggered.connect(lambda: self.move_requested.emit(self, 1))
 
+        menu.addSeparator()
+        mm_act = menu.addAction("✥ Enable Move Mode")
+        mm_act.setCheckable(True)
+        mm_act.setChecked(self._move_mode)
+        mm_act.triggered.connect(self.set_move_mode)
+        
         menu.addSeparator()
         remove_action = menu.addAction("✕ Remove Module")
         remove_action.triggered.connect(lambda: self.close_requested.emit(self))

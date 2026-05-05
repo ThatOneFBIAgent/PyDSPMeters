@@ -25,6 +25,7 @@ class StereometerModule(BaseModule):
         self._show_labels = True
         self._minimal_mode = False
         self._halved_view = False
+        self._corr_pos = "Bottom"
         self._left = np.zeros(1024, dtype=np.float32)
         self._right = np.zeros(1024, dtype=np.float32)
         self._corr = 0.0
@@ -43,7 +44,8 @@ class StereometerModule(BaseModule):
             "zoom": self._zoom,
             "show_labels": self._show_labels,
             "minimal_mode": self._minimal_mode,
-            "halved_view": self._halved_view
+            "halved_view": self._halved_view,
+            "corr_pos": self._corr_pos
         }
 
     _VALID_DISPLAY_MODES = {"Vectorscope", "Lissajous"}
@@ -64,6 +66,7 @@ class StereometerModule(BaseModule):
         self._show_labels = settings.get("show_labels", self._show_labels)
         self._minimal_mode = settings.get("minimal_mode", self._minimal_mode)
         self._halved_view = settings.get("halved_view", self._halved_view)
+        self._corr_pos = settings.get("corr_pos", self._corr_pos)
 
     def build_context_menu(self, menu):
         from PySide6.QtGui import QActionGroup
@@ -114,6 +117,16 @@ class StereometerModule(BaseModule):
             a.triggered.connect(lambda checked, t=c: setattr(self, "_corr_mode", t))
             crg.addAction(a)
             
+        cpm = menu.addMenu("Correlation Position")
+        cpg = QActionGroup(self)
+        for p in ["Top", "Bottom", "Left", "Right"]:
+            a = cpm.addAction(p)
+            a.setCheckable(True)
+            a.setChecked(p == self._corr_pos)
+            a.triggered.connect(lambda checked, t=p: setattr(self, "_corr_pos", t))
+            cpg.addAction(a)
+            
+        cpm.setEnabled(not self._minimal_mode)
         crm.setEnabled(not self._minimal_mode)
             
         a = menu.addAction("Minimal Mode")
@@ -140,23 +153,41 @@ class StereometerModule(BaseModule):
                 self._left, self._right, self.audio_engine.sample_rate)
 
     def _render(self, painter, w, h):
-        corr_h = 28 if not self._minimal_mode else 0
-        scope_h = h - corr_h
-        cx = w / 2
+        corr_size = 28 if not self._minimal_mode else 0
+        pos = self._corr_pos
+        
+        if self._minimal_mode:
+            scope_rect = QRectF(0, 0, w, h)
+            corr_rect = QRectF(0, 0, 0, 0)
+        elif pos == "Bottom":
+            scope_rect = QRectF(0, 0, w, h - corr_size)
+            corr_rect = QRectF(0, h - corr_size, w, corr_size)
+        elif pos == "Top":
+            scope_rect = QRectF(0, corr_size, w, h - corr_size)
+            corr_rect = QRectF(0, 0, w, corr_size)
+        elif pos == "Left":
+            scope_rect = QRectF(corr_size, 0, w - corr_size, h)
+            corr_rect = QRectF(0, 0, corr_size, h)
+        else: # Right
+            scope_rect = QRectF(0, 0, w - corr_size, h)
+            corr_rect = QRectF(w - corr_size, 0, corr_size, h)
 
+        sw, sh = scope_rect.width(), scope_rect.height()
+        sx, sy_off = scope_rect.x(), scope_rect.y()
+        
+        cx = sx + sw / 2
+        
         # Reserve space for labels if they are showing
         margin = 18 if self._show_labels else 4
         
         if self._halved_view:
-            cy = scope_h
-            # In halved view, we only need margin at top and sides, not bottom
-            radius = min(cx - margin, scope_h - margin)
+            cy = sy_off + sh
+            radius = min(sw / 2 - margin, sh - margin)
         else:
-            cy = scope_h / 2
-            # Leave room for labels on all 4 sides
-            radius = min(cx - margin, cy - margin)
+            cy = sy_off + sh / 2
+            radius = min(sw / 2 - margin, sh / 2 - margin)
 
-        # 1. Base Grid / Crosshair (Always visible)
+        # 1. Base Grid / Crosshair
         painter.setPen(QPen(QColor(Colors.GRID), 0.5))
         painter.drawLine(int(cx), int(cy - radius), int(cx), int(cy + radius))
         painter.drawLine(int(cx - radius), int(cy), int(cx + radius), int(cy))
@@ -175,14 +206,14 @@ class StereometerModule(BaseModule):
             else:
                 painter.drawEllipse(QPointF(cx, cy), radius, radius)
 
-        # Labels (only if enabled)
+        # Labels
         if self._show_labels:
             painter.setFont(Fonts.small())
             painter.setPen(QColor(Colors.TEXT_DIM))
             if self._halved_view:
                 if self._display_mode == "Vectorscope":
                     painter.setFont(self.get_responsive_font(Fonts.small, 12, 12, "M"))
-                    painter.drawText(QRectF(cx - 6, 2, 12, 12), Qt.AlignCenter, "M")
+                    painter.drawText(QRectF(cx - 6, sy_off + 2, 12, 12), Qt.AlignCenter, "M")
                     painter.setFont(self.get_responsive_font(Fonts.small, 12, 12, "S"))
                     painter.drawText(QRectF(cx - radius - 14, cy - 14, 12, 12), Qt.AlignCenter, "S")
                     painter.drawText(QRectF(cx + radius + 2, cy - 14, 12, 12), Qt.AlignCenter, "S")
@@ -202,7 +233,7 @@ class StereometerModule(BaseModule):
                 else:
                     painter.setFont(self.get_responsive_font(Fonts.small, 20, 14, "L"))
                     painter.drawText(QRectF(cx - 10, cy - radius - 16, 20, 14), Qt.AlignCenter, "L")
-                    painter.drawText(QRectF(cx - 10, cy + radius + 2, 20, 14), Qt.AlignCenter, "L")
+                    painter.drawText(QRectF(cx - 10, cy + radius + 2, 20, 14), Qt.AlignCenter, "M")
                     painter.setFont(self.get_responsive_font(Fonts.small, 16, 14, "R"))
                     painter.drawText(QRectF(cx - radius - 18, cy - 7, 16, 14), Qt.AlignCenter, "R")
                     painter.drawText(QRectF(cx + radius + 2, cy - 7, 16, 14), Qt.AlignCenter, "R")
@@ -212,12 +243,7 @@ class StereometerModule(BaseModule):
         if self._color_mode.startswith("Multi-Band"):
             low_l, mid_l, high_l = self._multiband.split(left)
             low_r, mid_r, high_r = self._multiband.split(right)
-            
-            if self._color_mode == "Multi-Band (RGB)":
-                cols = ["#FF3333", "#33FF33", "#3388FF"]
-            else:
-                cols = [Colors.BAND_LOW, Colors.BAND_MID, Colors.BAND_HIGH]
-                
+            cols = ["#FF3333", "#33FF33", "#3388FF"] if self._color_mode == "Multi-Band (RGB)" else [Colors.BAND_LOW, Colors.BAND_MID, Colors.BAND_HIGH]
             for bl, br, col in zip([low_l, mid_l, high_l], [low_r, mid_r, high_r], cols):
                 self._draw_trace(painter, bl, br, cx, cy, radius, QColor(col), 100)
         else:
@@ -226,36 +252,63 @@ class StereometerModule(BaseModule):
 
         # Correlation bar
         if not self._minimal_mode:
-            margin = 12
-            bar_w = w - margin * 2
-            bar_y = scope_h + 4
-            inner_h = corr_h - 8
-            painter.fillRect(QRectF(margin, bar_y, bar_w, inner_h), QColor(Colors.BG_INPUT))
-            center_x = margin + bar_w / 2
-            painter.setPen(QPen(QColor(Colors.GRID_BRIGHT), 1))
-            painter.drawLine(int(center_x), int(bar_y), int(center_x), int(bar_y + inner_h))
+            is_vert_corr = pos in ["Left", "Right"]
+            margin = 16 if is_vert_corr else 12
+            inner_m = 6
+            
+            bx, by, bw, bh = corr_rect.x(), corr_rect.y(), corr_rect.width(), corr_rect.height()
+            
+            if is_vert_corr:
+                bar_rect = QRectF(bx + inner_m, by + margin, bw - inner_m * 2, bh - margin * 2)
+            else:
+                bar_rect = QRectF(bx + margin, by + inner_m, bw - margin * 2, bh - inner_m * 2)
+                
+            painter.fillRect(bar_rect, QColor(Colors.BG_INPUT))
+            
+            if is_vert_corr:
+                mid = bar_rect.y() + bar_rect.height() / 2
+                painter.setPen(QPen(QColor(Colors.GRID_BRIGHT), 1))
+                painter.drawLine(int(bar_rect.x()), int(mid), int(bar_rect.x() + bar_rect.width()), int(mid))
+            else:
+                mid = bar_rect.x() + bar_rect.width() / 2
+                painter.setPen(QPen(QColor(Colors.GRID_BRIGHT), 1))
+                painter.drawLine(int(mid), int(bar_rect.y()), int(mid), int(bar_rect.y() + bar_rect.height()))
 
             if self._corr_mode == "Single-Band":
-                cx2 = margin + (self._corr + 1) / 2 * bar_w
-                col = QColor(Colors.GREEN) if self._corr > 0 else QColor(Colors.RED)
+                val = self._corr
+                col = QColor(Colors.GREEN) if val > 0 else QColor(Colors.RED)
                 painter.setBrush(QBrush(col)); painter.setPen(Qt.NoPen)
-                painter.drawRoundedRect(QRectF(cx2 - 3, bar_y + 1, 6, inner_h - 2), 2, 2)
+                if is_vert_corr:
+                    # Vertical bar: +1 is Top, -1 is Bottom
+                    py = bar_rect.y() + bar_rect.height() * (1.0 - (val + 1) / 2.0)
+                    painter.drawRoundedRect(QRectF(bar_rect.x() + 1, py - 3, bar_rect.width() - 2, 6), 2, 2)
+                else:
+                    px = bar_rect.x() + (val + 1) / 2 * bar_rect.width()
+                    painter.drawRoundedRect(QRectF(px - 3, bar_rect.y() + 1, 6, bar_rect.height() - 2), 2, 2)
             else:
-                bh = inner_h / 4
-                for j, (name, col) in enumerate([("low", Colors.BAND_LOW),
-                                                  ("mid", Colors.BAND_MID),
-                                                  ("high", Colors.BAND_HIGH),
-                                                  ("overall", Colors.ACCENT)]):
+                n_bands = 4
+                band_size = (bar_rect.height() if is_vert_corr else bar_rect.width()) / n_bands
+                for j, (name, col) in enumerate([("low", Colors.BAND_LOW), ("mid", Colors.BAND_MID), ("high", Colors.BAND_HIGH), ("overall", Colors.ACCENT)]):
                     val = self._mb_corr.get(name, 0.0)
-                    bx = margin + (val + 1) / 2 * bar_w
                     painter.setBrush(QBrush(QColor(col))); painter.setPen(Qt.NoPen)
-                    painter.drawRoundedRect(QRectF(bx - 2, bar_y + j * bh + 1, 4, bh - 2), 1, 1)
+                    if is_vert_corr:
+                        sub_y = bar_rect.y() + j * band_size
+                        py = sub_y + band_size * (1.0 - (val + 1) / 2.0)
+                        painter.drawRoundedRect(QRectF(bar_rect.x() + 1, py - 2, bar_rect.width() - 2, 4), 1, 1)
+                    else:
+                        sub_x = bar_rect.x() + j * band_size
+                        px = sub_x + (val + 1) / 2 * band_size
+                        painter.drawRoundedRect(QRectF(px - 2, bar_rect.y() + 1, 4, bar_rect.height() - 2), 1, 1)
 
             painter.setPen(QColor(Colors.TEXT_DIM))
-            painter.setFont(self.get_responsive_font(Fonts.small, 20, inner_h, "-1"))
-            painter.drawText(QRectF(margin, bar_y - 1, 20, inner_h), Qt.AlignVCenter, "-1")
-            painter.setFont(self.get_responsive_font(Fonts.small, 20, inner_h, "+1"))
-            painter.drawText(QRectF(margin + bar_w - 16, bar_y - 1, 20, inner_h), Qt.AlignVCenter, "+1")
+            if is_vert_corr:
+                painter.setFont(self.get_responsive_font(Fonts.small, bw, 14, "+1"))
+                painter.drawText(QRectF(bx, bar_rect.y() - 14, bw, 14), Qt.AlignCenter, "+1")
+                painter.drawText(QRectF(bx, bar_rect.y() + bar_rect.height(), bw, 14), Qt.AlignCenter, "-1")
+            else:
+                painter.setFont(self.get_responsive_font(Fonts.small, 20, bh, "-1"))
+                painter.drawText(QRectF(bar_rect.x() - 16, bar_rect.y(), 16, bar_rect.height()), Qt.AlignVCenter | Qt.AlignRight, "-1")
+                painter.drawText(QRectF(bar_rect.x() + bar_rect.width() + 2, bar_rect.y(), 16, bar_rect.height()), Qt.AlignVCenter | Qt.AlignLeft, "+1")
 
     def _draw_trace(self, painter, left, right, cx, cy, radius, color, alpha):
         n = len(left)

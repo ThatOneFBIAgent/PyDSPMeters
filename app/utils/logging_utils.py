@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QTextEdit, QFrame, QApplication
 )
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QPalette
 
 from app.theme import Colors, Fonts, build_stylesheet
@@ -66,7 +66,19 @@ class CrashDialog(QDialog):
         tb_list = traceback.format_exception(exc_type, exc_value, exc_traceback)
         self.tb_text = "".join(tb_list)
         
+        self.setWindowOpacity(0.0)
+        self._fade_timer = QTimer(self)
+        self._fade_timer.timeout.connect(self._fade_step)
+        self._fade_timer.start(20)
+        
         self._init_ui(exc_type.__name__, str(exc_value))
+        
+    def _fade_step(self):
+        op = self.windowOpacity()
+        if op < 1.0:
+            self.setWindowOpacity(min(1.0, op + 0.08))
+        else:
+            self._fade_timer.stop()
         
     def _init_ui(self, err_type, err_msg):
         layout = QVBoxLayout(self)

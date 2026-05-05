@@ -29,6 +29,8 @@ class CustomSplashScreen(QSplashScreen):
         self._progress = 0
         self._display_progress = 0.0
         self._status = "Initializing core components..."
+        self._pulse = 0.0
+        self._pulse_dir = 1
         
         # Smoothed colors for theme transitions
         self._current_colors = {
@@ -60,6 +62,12 @@ class CustomSplashScreen(QSplashScreen):
             self._display_progress += diff * 0.1
         else:
             self._display_progress = float(self._progress)
+            
+        # Idle pulse
+        self._pulse += 0.02 * self._pulse_dir
+        if self._pulse > 1.0 or self._pulse < 0.0:
+            self._pulse_dir *= -1
+            self._pulse = max(0.0, min(1.0, self._pulse))
             
         # Lerp colors towards current global theme
         changed = False
@@ -112,6 +120,10 @@ class CustomSplashScreen(QSplashScreen):
             f.setLetterSpacing(QFont.AbsoluteSpacing, 4)
             f.setWeight(QFont.Black)
             p.setFont(f)
+            # Pulse the logo opacity
+            col = c["ACCENT"]
+            col.setAlpha(int(200 + 55 * self._pulse))
+            p.setPen(col)
             p.drawText(rect.adjusted(0, -25, 0, 0), Qt.AlignCenter, "PYDSPMETERS")
             
             # Subtitle
@@ -214,19 +226,33 @@ def main():
     splash.set_progress(60, "Restoring workspace...")
     app.processEvents()
     
+    app.processEvents()
     app.setStyleSheet(build_stylesheet())
+    app.processEvents()
     window = MainWindow(engine, splash=splash)
+    app.processEvents()
     
     splash.set_progress(90, "Starting real-time streams...")
     app.processEvents()
 
     # Wait for window to be ready
     def finalize():
-        splash.set_progress(100, "Ready")
-        splash.finish(window)
+        # Prepare layout and dock if needed BEFORE showing
+        window.finish_loading()
+        app.processEvents()
+        
+        # First ensure window is shown and rendered
         window.show()
+        app.processEvents()
+        
+        # Then fade out or finish splash
+        splash.set_progress(100, "Ready")
+        app.processEvents()
+        
+        # Give it one more beat to ensure MainWindow is fully painted
+        QTimer.singleShot(200, lambda: splash.finish(window))
 
-    QTimer.singleShot(500, finalize)
+    QTimer.singleShot(100, finalize)
 
     sys.exit(app.exec())
 

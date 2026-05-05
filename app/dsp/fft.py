@@ -9,20 +9,21 @@ from scipy.signal import get_window
 import app.dsp.accel as accel
 
 
+_WINDOW_CACHE = {}
+
 def compute_fft(data: np.ndarray, fft_size: int = 4096,
                 window: str = "hann") -> np.ndarray:
     """
     Compute the magnitude spectrum of audio data.
-
-    Args:
-        data: 1-D float32 audio samples.
-        fft_size: Number of FFT bins.
-        window: Window function name (scipy compatible).
-
-    Returns:
-        magnitude_db array.
+    Uses cached windows for performance.
     """
-    win = get_window(window, fft_size, fftbins=True).astype(np.float32)
+    cache_key = (window, fft_size)
+    if cache_key in _WINDOW_CACHE:
+        win = _WINDOW_CACHE[cache_key]
+    else:
+        win = get_window(window, fft_size, fftbins=True).astype(np.float32)
+        _WINDOW_CACHE[cache_key] = win
+        
     return accel.compute_fft(data, win, fft_size)
 
 
@@ -126,24 +127,26 @@ def hz_to_note_name(hz: float) -> str:
     return f"{note}{octave} {sign}{cents}c"
 
 
+_TILT_CACHE = {}
+
 def apply_tilt(magnitude_db: np.ndarray, freqs: np.ndarray,
                tilt_db: float) -> np.ndarray:
     """
     Apply a spectral tilt. Positive tilts boost highs, negative boosts lows.
-
-    Args:
-        magnitude_db: Magnitude spectrum in dB.
-        freqs: Corresponding frequency array.
-        tilt_db: Tilt amount in dB across the spectrum.
-
-    Returns:
-        Tilted magnitude spectrum.
+    Uses cached curves for performance.
     """
     if abs(tilt_db) < 0.01:
         return magnitude_db
-    log_freqs = np.log10(np.clip(freqs, 20.0, None))
-    log_min = np.log10(20.0)
-    log_max = np.log10(20000.0)
-    norm = (log_freqs - log_min) / (log_max - log_min)  # 0..1
-    tilt_curve = (norm - 0.5) * tilt_db
+        
+    cache_key = (len(freqs), float(tilt_db), float(freqs[1]-freqs[0]))
+    if cache_key in _TILT_CACHE:
+        tilt_curve = _TILT_CACHE[cache_key]
+    else:
+        log_freqs = np.log10(np.clip(freqs, 20.0, None))
+        log_min = np.log10(20.0)
+        log_max = np.log10(20000.0)
+        norm = (log_freqs - log_min) / (log_max - log_min)  # 0..1
+        tilt_curve = (norm - 0.5) * tilt_db
+        _TILT_CACHE[cache_key] = tilt_curve
+        
     return magnitude_db + tilt_curve

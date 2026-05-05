@@ -142,6 +142,10 @@ class TitleBar(QFrame):
         self.gear_btn = _icon_btn("⚙", "Settings")
         layout.addWidget(self.gear_btn)
 
+        self.move_btn = _icon_btn("✥", "Toggle Move Mode")
+        self.move_btn.setCheckable(True)
+        layout.insertWidget(layout.indexOf(self.add_btn) + 1, self.move_btn)
+
         self.min_btn = _icon_btn("─", "Minimize")
         self.min_btn.clicked.connect(self._window.showMinimized)
         layout.addWidget(self.min_btn)
@@ -156,16 +160,21 @@ class TitleBar(QFrame):
         self.setStyleSheet(f"#titleBar {{ background: {Colors.BG_DARKEST}; border-bottom: 1px solid {Colors.BORDER}; }}")
         self.logo.setStyleSheet(f"color: {Colors.ACCENT}; background: transparent; font-size: 10pt; font-weight: bold;")
         
-        btn_style = f"QPushButton#titleBarButton {{ background: transparent; border: none; color: {Colors.TEXT_DIM}; " \
-                    f"font-size: 10pt; padding: 0; margin: 0; min-height: 0px; min-width: 0px; }} " \
-                    f"QPushButton#titleBarButton:hover {{ color: {Colors.ACCENT}; }}"
+        btn_style = f"""
+            QPushButton#titleBarButton {{ 
+                background: transparent; border: none; color: {Colors.TEXT_DIM}; 
+                font-size: 10pt; padding: 0; margin: 0; min-height: 0px; min-width: 0px; 
+            }} 
+            QPushButton#titleBarButton:hover {{ color: {Colors.ACCENT}; }}
+            QPushButton#titleBarButton:checked {{ color: {Colors.ACCENT}; background: {Colors.BG_HEADER}; border-radius: 2px; }}
+        """
         
-        for b in [self.add_btn, self.layout_btn, self.gear_btn, self.min_btn]:
+        for b in [self.add_btn, self.layout_btn, self.gear_btn, self.min_btn, self.move_btn]:
             b.setStyleSheet(btn_style)
             
         self.close_btn.setStyleSheet(f"QPushButton#titleBarButton {{ background: transparent; border: none; color: {Colors.TEXT_DIM}; "
-                                    f"font-size: 10pt; padding: 0; margin: 0; min-height: 0px; min-width: 0px; }} "
-                                    f"QPushButton#titleBarButton:hover {{ color: {Colors.RED}; }}")
+                                     f"font-size: 10pt; padding: 0; margin: 0; min-height: 0px; min-width: 0px; }} "
+                                     f"QPushButton#titleBarButton:hover {{ color: {Colors.RED}; }}")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -278,11 +287,13 @@ class MainWindow(QMainWindow):
 
         # Module list
         self._modules: list[BaseModule] = []
+        self._move_mode_active = False
 
         # Connect title bar buttons
         self.title_bar.add_btn.clicked.connect(self._show_add_menu)
         self.title_bar.layout_btn.clicked.connect(self._toggle_layout)
         self.title_bar.gear_btn.clicked.connect(self._show_gear_menu)
+        self.title_bar.move_btn.clicked.connect(self._toggle_move_mode)
 
         # Apply window settings
         
@@ -347,53 +358,55 @@ class MainWindow(QMainWindow):
             logging.info(f"UI: Loading module '{m_key}'")
             self.add_module(m_key, m_config)
             
-        def finalize_load():
-            self._loading_settings = False
-            self.splitter.setVisible(True)
-            
-            saved_sizes = self._settings.get("splitter_sizes", [])
-            if saved_sizes and len(saved_sizes) == self.splitter.count():
-                self.splitter.setSizes(saved_sizes)
-            else:
-                # Fair distribution if no saved sizes or mismatch
-                total = self.splitter.width() if not self._layout_vertical else self.splitter.height()
-                count = self.splitter.count()
-                if count > 0:
-                    self.splitter.setSizes([total // count] * count)
-            
-            if hasattr(self, "_loading_overlay") and self._loading_overlay:
-                self._loading_overlay.fade_out()
-            
-            # Restore appbar after window is fully laid out
-            if getattr(self, "_appbar_saved", False):
-                self._toggle_appbar(True)
-                    
-        QTimer.singleShot(250, finalize_load)
+        # Start audio stream (with slight delay to avoid startup clicks)
+        QTimer.singleShot(500, self._start_audio_stream)
 
-        def start_audio():
-            self._refresh_devices()
-            best_index = None
-            
-            # Try to match by full_id first
-            if self._target_device_id:
-                for d in self._devices:
-                    if d["full_id"] == self._target_device_id:
-                        best_index = d["index"]
-                        break
-            
-            # Fallback to index if valid
-            if best_index is None and self._current_device is not None:
-                if any(d["index"] == self._current_device for d in self._devices):
-                    best_index = self._current_device
-            
-            self._current_device = best_index
-            self.audio_engine.error_occurred.connect(self._on_audio_error)
-            
-            logging.info(f"Audio: Attempting to start engine with device index {best_index}")
-            self.audio_engine.start(best_index)
-            self._is_ready = True
+    def finish_loading(self):
+        """Finalize UI layout and restore persistent state."""
+        self._loading_settings = False
+        self.splitter.setVisible(True)
+        
+        saved_sizes = self._settings.get("splitter_sizes", [])
+        if saved_sizes and len(saved_sizes) == self.splitter.count():
+            self.splitter.setSizes(saved_sizes)
+        else:
+            # Fair distribution if no saved sizes or mismatch
+            total = self.splitter.width() if not self._layout_vertical else self.splitter.height()
+            count = self.splitter.count()
+            if count > 0:
+                self.splitter.setSizes([total // count] * count)
+        
+        if hasattr(self, "_loading_overlay") and self._loading_overlay:
+            self._loading_overlay.fade_out()
+        
+        # Restore appbar after window is fully laid out
+        if getattr(self, "_appbar_saved", False):
+            # Immediate toggle during startup to avoid 'pushed down' glitch
+            self._toggle_appbar(True, delay=0)
 
-        QTimer.singleShot(100, start_audio)
+    def _start_audio_stream(self):
+        """Find best device match and start the audio stream."""
+        self._refresh_devices()
+        best_index = None
+        
+        # Try to match by full_id first
+        if self._target_device_id:
+            for d in self._devices:
+                if d["full_id"] == self._target_device_id:
+                    best_index = d["index"]
+                    break
+        
+        # Fallback to index if valid
+        if best_index is None and self._current_device is not None:
+            if any(d["index"] == self._current_device for d in self._devices):
+                best_index = self._current_device
+        
+        self._current_device = best_index
+        self.audio_engine.error_occurred.connect(self._on_audio_error)
+        
+        logging.info(f"Audio: Attempting to start engine with device index {best_index}")
+        self.audio_engine.start(best_index)
+        self._is_ready = True
 
     # ── Device Management ───────────────────────────────────────────────────
 
@@ -520,10 +533,20 @@ class MainWindow(QMainWindow):
                 act.triggered.connect(lambda checked, n=name: self._apply_theme(n))
                 group_sub.addAction(act)
 
-        menu.addAction("Show Module Headers", self._toggle_headers).setCheckable(True)
-        menu.actions()[-1].setChecked(self._show_headers)
-        menu.addAction("Auto-Hide Title Bar", self._toggle_ghost_mode).setCheckable(True)
-        menu.actions()[-1].setChecked(self._auto_hide_ui)
+        headers_act = menu.addAction("Show Module Headers")
+        headers_act.setCheckable(True)
+        headers_act.setChecked(self._show_headers)
+        headers_act.triggered.connect(self._toggle_headers)
+
+        ghost_act = menu.addAction("Auto-Hide Title Bar")
+        ghost_act.setCheckable(True)
+        ghost_act.setChecked(self._auto_hide_ui)
+        ghost_act.triggered.connect(self._toggle_ghost_mode)
+        
+        move_mode_act = menu.addAction("✥ Enable Move Mode")
+        move_mode_act.setCheckable(True)
+        move_mode_act.setChecked(getattr(self, "_move_mode_active", False))
+        move_mode_act.triggered.connect(self._toggle_move_mode)
         
         appbar_menu = menu.addMenu("📌  Dock as App Bar")
         toggle_act = appbar_menu.addAction("Enable App Bar")
@@ -566,6 +589,28 @@ class MainWindow(QMainWindow):
         for m in self._modules:
             m.update_theme()
             m.canvas.update()
+
+    def _toggle_move_mode(self, enabled=None):
+        if enabled is None:
+            enabled = not self._move_mode_active
+        self._move_mode_active = enabled
+        self.title_bar.move_btn.setChecked(enabled)
+        
+        # Disable interaction risky buttons
+        self.title_bar.add_btn.setEnabled(not enabled)
+        self.title_bar.layout_btn.setEnabled(not enabled)
+        
+        if enabled:
+            self.title_bar.add_btn.setToolTip("Locked during Move Mode")
+            self.title_bar.layout_btn.setToolTip("Locked during Move Mode")
+        else:
+            self.title_bar.add_btn.setToolTip("Add module")
+            # Only re-enable layout if NOT docked
+            self.title_bar.layout_btn.setEnabled(not getattr(self, "_appbar_active", False))
+            self._update_layout_tooltip()
+
+        for m in self._modules:
+            m.set_move_mode(enabled)
 
     def _apply_theme(self, name: str):
         apply_theme(name, self._settings.get("ui", {}).get("color_overrides", {}))
@@ -695,11 +740,14 @@ class MainWindow(QMainWindow):
 
     # ── App Bar ──────────────────────────────────────────────────────────────
 
-    def _toggle_appbar(self, checked):
+    def _toggle_appbar(self, checked, delay=100):
         self._appbar_active = checked
         if checked:
             # Need a slight delay to ensure window is mapped and geometry is stable
-            QTimer.singleShot(300, self._apply_appbar)
+            if delay > 0:
+                QTimer.singleShot(delay, self._apply_appbar)
+            else:
+                self._apply_appbar()
         else:
             self._release_appbar()
             
@@ -755,6 +803,7 @@ class MainWindow(QMainWindow):
             import ctypes.wintypes as wt
 
             ABM_NEW = 0x00000000
+            ABM_QUERYPOS = 0x00000002
             ABM_SETPOS = 0x00000003
             ABE_LEFT, ABE_TOP, ABE_RIGHT, ABE_BOTTOM = 0, 1, 2, 3
 
@@ -782,12 +831,23 @@ class MainWindow(QMainWindow):
             elif uEdge == ABE_BOTTOM:
                 abd.rc = wt.RECT(sg.left(), sg.bottom() - thickness, sg.right(), sg.bottom())
 
+            # Windows AppBar Trick: Register off-screen (-10k) then Query/Set position.
+            # This bypasses the 'Workspace Avoidance' logic that would otherwise push the window down
+            # when it reserves the space it's already sitting in.
+            # or in short: sent to narnia and then whiplashed back 
             shell32 = ctypes.windll.shell32
             shell32.SHAppBarMessage(ABM_NEW, ctypes.byref(abd))
+            self.move(-10000, -10000)
+            shell32.SHAppBarMessage(ABM_QUERYPOS, ctypes.byref(abd))
             shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(abd))
 
-            self.setGeometry(abd.rc.left, abd.rc.top,
-                             abd.rc.right - abd.rc.left, abd.rc.bottom - abd.rc.top)
+            final_rect = QRect(abd.rc.left, abd.rc.top,
+                               abd.rc.right - abd.rc.left, abd.rc.bottom - abd.rc.top)
+            
+            # Qt.Tool ensures it stays out of taskbar and maintains AppBar stability
+            self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+            self.setGeometry(final_rect)
+            self.show() 
         except Exception as e:
             print(f"[AppBar] Failed to dock (Win32): {e}")
             self._appbar_active = False
@@ -873,6 +933,7 @@ class MainWindow(QMainWindow):
         logging.info(f"Module '{module_key}' (internal: {cls.__name__}) initialized.")
         module.close_requested.connect(self.remove_module)
         module.move_requested.connect(self._move_module)
+        module.move_mode_exit_requested.connect(lambda: self._toggle_move_mode(False))
         
         # Self-test for stability
         module.self_test()

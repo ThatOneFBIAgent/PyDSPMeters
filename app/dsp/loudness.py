@@ -89,6 +89,10 @@ class LoudnessMeter:
         self._int_block_size = int(0.4 * sample_rate)
         self._int_step_size = int(0.1 * sample_rate) # 75% overlap
         self._int_accum_samples = 0
+        
+        # Caching
+        self._last_integrated_lufs = -120.0
+        self._integrated_dirty = True
 
     def process(self, data: np.ndarray):
         """Feed new audio data into the meter."""
@@ -111,17 +115,18 @@ class LoudnessMeter:
         )
         self._buf_filled = min(self._buf_filled + n, self._shortterm_samples)
 
-        # Integrated Accumulation
+        # Integrated Accumulation: Use while loop to catch up if buffer is large
         self._int_accum_samples += n
-        if self._int_accum_samples >= self._int_step_size:
+        while self._int_accum_samples >= self._int_step_size:
             self._update_integrated_blocks()
-            self._int_accum_samples %= self._int_step_size
+            self._int_accum_samples -= self._int_step_size
 
     def _update_integrated_blocks(self):
         """Calculate mean square for the last 400ms and store for gated average."""
         ms = self._mean_square_lufs(self._int_block_size)
         if ms > 0:
             self._integrated_blocks.append(ms)
+            self._integrated_dirty = True # Mark cache as invalid
             # Keep history to ~1 hour to prevent memory leaks
             if len(self._integrated_blocks) > 36000: # 1 hour at 0.1s steps
                 self._integrated_blocks.pop(0)
@@ -129,6 +134,8 @@ class LoudnessMeter:
     def reset_integrated(self):
         """Reset the integrated loudness calculation."""
         self._integrated_blocks = []
+        self._integrated_dirty = True
+        self._last_integrated_lufs = -120.0
 
     def _get_last_n(self, buf: np.ndarray, n_samples: int) -> np.ndarray:
         """Extract last n_samples from circular buffer."""
@@ -175,14 +182,22 @@ class LoudnessMeter:
     @property
     def lufs_integrated(self) -> float:
         """Gated Integrated Loudness per ITU-R BS.1770-4."""
+        if not self._integrated_dirty:
+            return self._last_integrated_lufs
+
         if not self._integrated_blocks:
+            self._last_integrated_lufs = -120.0
+            self._integrated_dirty = False
             return -120.0
         
         blocks = np.array(self._integrated_blocks)
         # 1. Absolute Threshold (-70 LUFS)
         abs_thresh = 10**((-70 + 0.691) / 10.0)
         indices = np.where(blocks > abs_thresh)[0]
-        if len(indices) == 0: return -120.0
+        if len(indices) == 0:
+            self._last_integrated_lufs = -120.0
+            self._integrated_dirty = False
+            return -120.0
         
         # 2. Relative Threshold (-10 LU relative to absolute-gated average)
         gated_abs = blocks[indices]
@@ -190,10 +205,15 @@ class LoudnessMeter:
         rel_thresh = avg_abs * (10**(-10/10.0))
         
         indices_rel = np.where(gated_abs > rel_thresh)[0]
-        if len(indices_rel) == 0: return -120.0
+        if len(indices_rel) == 0:
+            self._last_integrated_lufs = -120.0
+            self._integrated_dirty = False
+            return -120.0
         
         final_avg = np.mean(gated_abs[indices_rel])
-        return -0.691 + 10.0 * np.log10(final_avg)
+        self._last_integrated_lufs = -0.691 + 10.0 * np.log10(final_avg)
+        self._integrated_dirty = False
+        return self._last_integrated_lufs
 
     @property
     def lufs_momentary_channels(self) -> np.ndarray:
