@@ -79,9 +79,9 @@ class VUMeterModule(BaseModule):
             a.triggered.connect(lambda checked, t=c: setattr(self, "_channel", t))
             cg.addAction(a)
 
-        calm = menu.addMenu("Cal (dB)")
+        calm = menu.addMenu("Calibration (dB)")
         calg = QActionGroup(self)
-        for c in [-20, -15, -10, -5, 0, 5, 10, 15, 20]:
+        for c in [-20, -15, -10, -5, -3, -2, -1, 0, 1, 2, 3, 5, 10, 15, 20]:
             a = calm.addAction(str(c))
             a.setCheckable(True)
             a.setChecked(abs(c - self._cal_offset) < 0.1)

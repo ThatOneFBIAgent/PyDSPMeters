@@ -244,7 +244,7 @@ class MainWindow(QMainWindow):
         self._settings = SettingsManager.load()
 
         self.setWindowFlags(
-            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+            Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         )
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setMinimumSize(40, 40)
@@ -382,7 +382,8 @@ class MainWindow(QMainWindow):
         # Restore appbar after window is fully laid out
         if getattr(self, "_appbar_saved", False):
             # Immediate toggle during startup to avoid 'pushed down' glitch
-            self._toggle_appbar(True, delay=0)
+            # Slight delay to ensure window handle is fully established and mapped
+            self._toggle_appbar(True, delay=100)
 
     def _start_audio_stream(self):
         """Find best device match and start the audio stream."""
@@ -802,6 +803,11 @@ class MainWindow(QMainWindow):
             import ctypes
             import ctypes.wintypes as wt
 
+            # Set flags BEFORE getting winId or registering, as flags can recreate the handle
+            self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+            self.show()
+            QApplication.processEvents()
+
             ABM_NEW = 0x00000000
             ABM_QUERYPOS = 0x00000002
             ABM_SETPOS = 0x00000003
@@ -834,22 +840,31 @@ class MainWindow(QMainWindow):
             # Windows AppBar Trick: Register off-screen (-10k) then Query/Set position.
             # This bypasses the 'Workspace Avoidance' logic that would otherwise push the window down
             # when it reserves the space it's already sitting in.
-            # or in short: sent to narnia and then whiplashed back 
             shell32 = ctypes.windll.shell32
+            user32 = ctypes.windll.user32
+            
+            # Register the bar
             shell32.SHAppBarMessage(ABM_NEW, ctypes.byref(abd))
-            self.move(-10000, -10000)
+            
+            # Send to Narnia immediately via direct Win32 call (bypasses Qt event queue)
+            # SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER = 0x0001 | 0x0010 | 0x0004 = 0x0015
+            user32.SetWindowPos(hwnd, 0, -10000, -10000, 0, 0, 0x0015)
+            QApplication.processEvents()
+            
+            # Query and set the reserved space
             shell32.SHAppBarMessage(ABM_QUERYPOS, ctypes.byref(abd))
             shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(abd))
 
             final_rect = QRect(abd.rc.left, abd.rc.top,
                                abd.rc.right - abd.rc.left, abd.rc.bottom - abd.rc.top)
             
-            # Qt.Tool ensures it stays out of taskbar and maintains AppBar stability
-            self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+            # Whiplash back to the reserved space
             self.setGeometry(final_rect)
-            self.show() 
+            self.show()
+            QApplication.processEvents()
+            
         except Exception as e:
-            print(f"[AppBar] Failed to dock (Win32): {e}")
+            logging.error(f"AppBar: Failed to dock (Win32): {e}")
             self._appbar_active = False
             self._update_appbar_ui()
 
@@ -902,6 +917,10 @@ class MainWindow(QMainWindow):
             abd.cbSize = ctypes.sizeof(APPBARDATA)
             abd.hWnd = int(self.winId())
             ctypes.windll.shell32.SHAppBarMessage(ABM_REMOVE, ctypes.byref(abd))
+            
+            # Restore standard window flags to ensure taskbar visibility and correct behavior
+            self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+            self.show()
         except Exception as e:
             print(f"[AppBar] Failed to release (Win32): {e}")
 
@@ -911,6 +930,10 @@ class MainWindow(QMainWindow):
             hwnd = str(int(self.winId()))
             subprocess.run(["xprop", "-id", hwnd, "-remove", "_NET_WM_STRUT"], capture_output=True)
             subprocess.run(["xprop", "-id", hwnd, "-remove", "_NET_WM_STRUT_PARTIAL"], capture_output=True)
+            
+            # Restore standard window flags
+            self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+            self.show()
         except Exception as e:
             print(f"[AppBar] Failed to release (Linux): {e}")
 

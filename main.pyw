@@ -54,6 +54,8 @@ class CustomSplashScreen(QSplashScreen):
         self._progress = val
         if status:
             self._status = status
+        self.update()
+        QApplication.processEvents()
 
     def _animate(self):
         # Lerp progress
