@@ -180,20 +180,43 @@ def waveform_reduce(data, chunk_size):
 
 # ── Correlation ─────────────────────────────────────────────────────────────
 
-def correlation(left, right):
-    """Compute stereo correlation coefficient [-1, +1]."""
+def correlation(left: np.ndarray, right: np.ndarray) -> float:
+    """Compute stereo correlation coefficient in [-1, +1]."""
     if _HAS_NATIVE:
-        return _native.correlation(
-            left.astype(np.float32), right.astype(np.float32)
-        )
+        return _native.correlation(left.astype(np.float32), right.astype(np.float32))
     
-    # Pure Python fallback (numpy)
-    l_energy = np.sum(left ** 2)
-    r_energy = np.sum(right ** 2)
-    denom = np.sqrt(l_energy * r_energy)
-    if denom < 1e-20:
+    # Pure Python fallback
+    l_norm = left - np.mean(left)
+    r_norm = right - np.mean(right)
+    denom = np.sqrt(np.sum(l_norm**2) * np.sum(r_norm**2))
+    if denom < 1e-10:
         return 0.0
-    return float(np.sum(left * right) / denom)
+    return np.sum(l_norm * r_norm) / denom
+
+
+def multiband_correlation(left: np.ndarray, right: np.ndarray, sample_rate: float, bands: list) -> dict:
+    """Compute correlation per frequency band."""
+    if _HAS_NATIVE:
+        return _native.multiband_correlation(left.astype(np.float32), right.astype(np.float32), float(sample_rate), bands)
+    
+    # Pure Python fallback (simplified FFT-based approach)
+    n = len(left)
+    L = np.fft.rfft(left)
+    R = np.fft.rfft(right)
+    freqs = np.fft.rfftfreq(n, 1.0/sample_rate)
+    
+    results = {}
+    for name, lo, hi in bands:
+        mask = (freqs >= lo) & (freqs < hi)
+        if not np.any(mask):
+            results[name] = 0.0
+            continue
+            
+        l_band = np.fft.irfft(L * mask, n=n)
+        r_band = np.fft.irfft(R * mask, n=n)
+        results[name] = correlation(l_band, r_band)
+        
+    return results
 
 
 # ── Gain + Concatenation ───────────────────────────────────────────────────

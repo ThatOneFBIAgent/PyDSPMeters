@@ -22,39 +22,22 @@ def multiband_correlation(left: np.ndarray, right: np.ndarray,
                           bands: list[tuple[float, float]] | None = None
                           ) -> dict[str, float]:
     """
-    Compute correlation per frequency band using FFT-based band isolation.
-
-    Args:
-        left: Left channel samples.
-        right: Right channel samples.
-        sample_rate: Sample rate in Hz.
-        bands: List of (low_hz, high_hz) tuples. Defaults to Low/Mid/High.
-
-    Returns:
-        Dict mapping band name to correlation value.
+    Compute correlation per frequency band using native Rust acceleration.
     """
     if bands is None:
-        bands_named = [
+        bands_list = [
             ("low", 20.0, 250.0),
             ("mid", 250.0, 4000.0),
             ("high", 4000.0, 20000.0),
         ]
     else:
-        bands_named = [(f"band_{i}", lo, hi) for i, (lo, hi) in enumerate(bands)]
+        bands_list = [(f"band_{i}", lo, hi) for i, (lo, hi) in enumerate(bands)]
 
-    n = len(left)
-    freqs = np.fft.rfftfreq(n, d=1.0 / sample_rate)
-    L = np.fft.rfft(left)
-    R = np.fft.rfft(right)
-
-    results = {}
-    for name, lo, hi in bands_named:
-        mask = (freqs >= lo) & (freqs < hi)
-        l_band = np.fft.irfft(L * mask, n=n)
-        r_band = np.fft.irfft(R * mask, n=n)
-        results[name] = correlation(l_band, r_band)
-
-    results["overall"] = correlation(left, right)
+    # Rust handles the FFTs, gating, and correlation in one pass
+    results = dsp_accel.multiband_correlation(left, right, float(sample_rate), bands_list)
+    
+    # Add overall for consistency
+    results["overall"] = dsp_accel.correlation(left, right)
     return results
 
 

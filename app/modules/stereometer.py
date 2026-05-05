@@ -23,6 +23,14 @@ class StereometerModule(BaseModule):
         self._guide_mode = "Rhombus"
         self._zoom = 1.0
         self._show_labels = True
+        self._halved_view = False
+        self._minimal_mode = False
+        self._corr_pos = "Bottom"
+        
+        self._left = np.zeros(1024)
+        self._right = np.zeros(1024)
+        self._corr = 0.0
+        self._mb_corr = {"low": 0.0, "mid": 0.0, "high": 0.0, "overall": 0.0}
         self._minimal_mode = False
         self._halved_view = False
         self._corr_pos = "Bottom"
@@ -230,10 +238,9 @@ class StereometerModule(BaseModule):
                     painter.setFont(self.get_responsive_font(Fonts.small, 16, 14, "S"))
                     painter.drawText(QRectF(cx - radius - 18, cy - 7, 16, 14), Qt.AlignCenter, "S")
                     painter.drawText(QRectF(cx + radius + 2, cy - 7, 16, 14), Qt.AlignCenter, "S")
-                else:
                     painter.setFont(self.get_responsive_font(Fonts.small, 20, 14, "L"))
                     painter.drawText(QRectF(cx - 10, cy - radius - 16, 20, 14), Qt.AlignCenter, "L")
-                    painter.drawText(QRectF(cx - 10, cy + radius + 2, 20, 14), Qt.AlignCenter, "M")
+                    painter.drawText(QRectF(cx - 10, cy + radius + 2, 20, 14), Qt.AlignCenter, "R")
                     painter.setFont(self.get_responsive_font(Fonts.small, 16, 14, "R"))
                     painter.drawText(QRectF(cx - radius - 18, cy - 7, 16, 14), Qt.AlignCenter, "R")
                     painter.drawText(QRectF(cx + radius + 2, cy - 7, 16, 14), Qt.AlignCenter, "R")
@@ -287,28 +294,44 @@ class StereometerModule(BaseModule):
                     painter.drawRoundedRect(QRectF(px - 3, bar_rect.y() + 1, 6, bar_rect.height() - 2), 2, 2)
             else:
                 n_bands = 4
-                band_size = (bar_rect.height() if is_vert_corr else bar_rect.width()) / n_bands
-                for j, (name, col) in enumerate([("low", Colors.BAND_LOW), ("mid", Colors.BAND_MID), ("high", Colors.BAND_HIGH), ("overall", Colors.ACCENT)]):
+                bands = [("low", Colors.BAND_LOW), ("mid", Colors.BAND_MID), ("high", Colors.BAND_HIGH), ("overall", Colors.ACCENT)]
+                
+                # Always draw as 4 vertical segments (like the loudness module)
+                sub_bw = bar_rect.width() / n_bands
+                for j, (name, col_hex) in enumerate(bands):
                     val = self._mb_corr.get(name, 0.0)
-                    painter.setBrush(QBrush(QColor(col))); painter.setPen(Qt.NoPen)
-                    if is_vert_corr:
-                        sub_y = bar_rect.y() + j * band_size
-                        py = sub_y + band_size * (1.0 - (val + 1) / 2.0)
-                        painter.drawRoundedRect(QRectF(bar_rect.x() + 1, py - 2, bar_rect.width() - 2, 4), 1, 1)
-                    else:
-                        sub_x = bar_rect.x() + j * band_size
-                        px = sub_x + (val + 1) / 2 * band_size
-                        painter.drawRoundedRect(QRectF(px - 2, bar_rect.y() + 1, 4, bar_rect.height() - 2), 1, 1)
+                    sub_x = bar_rect.x() + j * sub_bw
+                    
+                    # Background for the sub-segment
+                    painter.fillRect(QRectF(sub_x + 1, bar_rect.y(), sub_bw - 2, bar_rect.height()), QColor(Colors.BG_DARKEST))
+                    
+                    # Zero-line for the segment
+                    mid_y = bar_rect.y() + bar_rect.height() / 2
+                    painter.setPen(QPen(QColor(Colors.GRID), 0.5))
+                    painter.drawLine(int(sub_x + 1), int(mid_y), int(sub_x + sub_bw - 1), int(mid_y))
+                    
+                    # Indicator
+                    painter.setBrush(QBrush(QColor(col_hex))); painter.setPen(Qt.NoPen)
+                    # Mapping: +1 is Top, -1 is Bottom
+                    py = bar_rect.y() + bar_rect.height() * (1.0 - (val + 1) / 2.0)
+                    
+                    # Ensure indicator has a visible width/height even in tiny modules
+                    ind_w = max(2.0, sub_bw - 4)
+                    ind_x = sub_x + (sub_bw - ind_w) / 2
+                    painter.drawRoundedRect(QRectF(ind_x, py - 2, ind_w, 4), 1, 1)
 
             painter.setPen(QColor(Colors.TEXT_DIM))
+            # Consistent Labels for Vertical Scale (+1 top, -1 bottom)
+            painter.setFont(self.get_responsive_font(Fonts.small, bw if is_vert_corr else 20, 14, "+1"))
             if is_vert_corr:
-                painter.setFont(self.get_responsive_font(Fonts.small, bw, 14, "+1"))
                 painter.drawText(QRectF(bx, bar_rect.y() - 14, bw, 14), Qt.AlignCenter, "+1")
                 painter.drawText(QRectF(bx, bar_rect.y() + bar_rect.height(), bw, 14), Qt.AlignCenter, "-1")
             else:
-                painter.setFont(self.get_responsive_font(Fonts.small, 20, bh, "-1"))
-                painter.drawText(QRectF(bar_rect.x() - 16, bar_rect.y(), 16, bar_rect.height()), Qt.AlignVCenter | Qt.AlignRight, "-1")
-                painter.drawText(QRectF(bar_rect.x() + bar_rect.width() + 2, bar_rect.y(), 16, bar_rect.height()), Qt.AlignVCenter | Qt.AlignLeft, "+1")
+                # Labels at the ends of the horizontal stretch (but still referring to the vertical scale of the segments)
+                painter.drawText(QRectF(bx, bar_rect.y() - 14, 20, 14), Qt.AlignLeft, "+1")
+                painter.drawText(QRectF(bx + bw - 20, bar_rect.y() - 14, 20, 14), Qt.AlignRight, "+1")
+                painter.drawText(QRectF(bx, bar_rect.y() + bh, 20, 14), Qt.AlignLeft, "-1")
+                painter.drawText(QRectF(bx + bw - 20, bar_rect.y() + bh, 20, 14), Qt.AlignRight, "-1")
 
     def _draw_trace(self, painter, left, right, cx, cy, radius, color, alpha):
         n = len(left)

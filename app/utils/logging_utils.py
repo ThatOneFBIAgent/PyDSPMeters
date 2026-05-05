@@ -199,6 +199,35 @@ class CrashDialog(QDialog):
         
         self.accept()
 
+def _cleanup_appbar_win32():
+    """Attempt to unregister any active App Bar (used during crashes)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class APPBARDATA(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD), ("hWnd", wintypes.HWND),
+                ("uCallbackMessage", wintypes.UINT), ("uEdge", wintypes.UINT),
+                ("rc", wintypes.RECT), ("lParam", wintypes.LPARAM),
+            ]
+        
+        # We don't have the hWnd here easily, but we can try to find our window
+        # For now, if we can't find it, we just hope the OS cleans up 
+        # (usually it does when the process dies, but sometimes it hangs)
+        # To be safe, we try to find any window with our title
+        hwnd = ctypes.windll.user32.FindWindowW(None, "PyDSPMeters")
+        if hwnd:
+            abd = APPBARDATA()
+            abd.cbSize = ctypes.sizeof(APPBARDATA)
+            abd.hWnd = hwnd
+            ctypes.windll.shell32.SHAppBarMessage(1, ctypes.byref(abd)) # ABM_REMOVE = 1
+            logging.info("AppBar: Successfully unregistered during crash cleanup.")
+    except Exception as e:
+        logging.error(f"AppBar: Failed to cleanup during crash: {e}")
+
 def global_exception_hook(exc_type, exc_value, exc_traceback):
     """Handle unhandled exceptions."""
     if issubclass(exc_type, KeyboardInterrupt):
@@ -208,16 +237,16 @@ def global_exception_hook(exc_type, exc_value, exc_traceback):
     # Log the error
     logging.critical("Unhandled Exception occurred:", exc_info=(exc_type, exc_value, exc_traceback))
 
+    # Attempt to cleanup AppBar so it doesn't leave a hole in the workspace
+    _cleanup_appbar_win32()
+
     # Show the crash dialog
-    # Ensure a QApplication exists (it might not if crash happened during startup)
     app = QApplication.instance()
-    created_app = False
     if not app:
         app = QApplication(sys.argv)
         from app.theme import apply_theme
         apply_theme("Midnight")
         app.setStyleSheet(build_stylesheet())
-        created_app = True
 
     dialog = CrashDialog(exc_type, exc_value, exc_traceback)
     dialog.exec()

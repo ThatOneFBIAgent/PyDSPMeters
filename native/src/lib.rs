@@ -422,6 +422,101 @@ fn compute_fft<'py>(
 }
 
 
+/// Compute correlation per frequency band.
+/// bands: Vec of (name, low_hz, high_hz)
+/// Returns: HashMap of band_name -> correlation
+#[pyfunction]
+fn multiband_correlation<'py>(
+    _py: Python<'py>,
+    left: PyReadonlyArray1<'py, f32>,
+    right: PyReadonlyArray1<'py, f32>,
+    sample_rate: f64,
+    bands: Vec<(String, f32, f32)>,
+) -> PyResult<std::collections::HashMap<String, f32>> {
+    let l_in = left.as_array();
+    let r_in = right.as_array();
+    let n = l_in.len().min(r_in.len());
+    if n == 0 { return Ok(std::collections::HashMap::new()); }
+
+    // Next power of two for FFT efficiency
+    let fft_size = n.next_power_of_two();
+    let mut l_buf = vec![Complex { re: 0.0, im: 0.0 }; fft_size];
+    let mut r_buf = vec![Complex { re: 0.0, im: 0.0 }; fft_size];
+
+    for i in 0..n {
+        l_buf[i].re = l_in[i];
+        r_buf[i].re = r_in[i];
+    }
+
+    PLANNER.with(|planner| {
+        let fft = planner.borrow_mut().plan_fft_forward(fft_size);
+        fft.process(&mut l_buf);
+    });
+    
+    let mut r_fft = r_buf.clone();
+    PLANNER.with(|planner| {
+        let fft = planner.borrow_mut().plan_fft_forward(fft_size);
+        fft.process(&mut r_fft);
+    });
+    let l_fft = l_buf;
+
+    let mut results = std::collections::HashMap::new();
+
+    for (name, lo, hi) in bands {
+        let bin_lo = (lo as f64 * fft_size as f64 / sample_rate) as usize;
+        let bin_hi = (hi as f64 * fft_size as f64 / sample_rate) as usize;
+        
+        let mut l_band = vec![Complex { re: 0.0, im: 0.0 }; fft_size];
+        let mut r_band = vec![Complex { re: 0.0, im: 0.0 }; fft_size];
+        
+        let mut energy = 0.0f32;
+        let limit = (fft_size / 2).min(bin_hi);
+        let start = (1).max(bin_lo); // Ensure we don't include DC if not intended
+
+        for i in start..=limit {
+            l_band[i] = l_fft[i];
+            r_band[i] = r_fft[i];
+            // Mirrored bins for real iFFT
+            l_band[fft_size - i] = l_fft[i].conj();
+            r_band[fft_size - i] = r_fft[i].conj();
+            
+            energy += l_fft[i].norm_sqr() + r_fft[i].norm_sqr();
+        }
+
+        // Gating: -90dB threshold (normalized by fft_size)
+        let threshold = 1e-9f32 * fft_size as f32; 
+        if energy < threshold {
+            results.insert(name, 0.0);
+            continue;
+        }
+
+        PLANNER.with(|planner| {
+            let ifft = planner.borrow_mut().plan_fft_inverse(fft_size);
+            ifft.process(&mut l_band);
+            ifft.process(&mut r_band);
+        });
+
+        let mut l_energy = 0.0f64;
+        let mut r_energy = 0.0f64;
+        let mut cross = 0.0f64;
+
+        for i in 0..fft_size {
+            let lv = l_band[i].re as f64;
+            let rv = r_band[i].re as f64;
+            l_energy += lv * lv;
+            r_energy += rv * rv;
+            cross += lv * rv;
+        }
+
+        let denom = (l_energy * r_energy).sqrt();
+        let corr = if denom < 1e-20 { 0.0 } else { (cross / denom).clamp(-1.0, 1.0) as f32 };
+        results.insert(name, corr);
+    }
+
+    Ok(results)
+}
+
+
 // ── Module Registration ─────────────────────────────────────────────────────
 
 #[pymodule]
@@ -434,5 +529,6 @@ fn dsp_accel(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(correlation, m)?)?;
     m.add_function(wrap_pyfunction!(apply_gain_and_concat, m)?)?;
     m.add_function(wrap_pyfunction!(compute_fft, m)?)?;
+    m.add_function(wrap_pyfunction!(multiband_correlation, m)?)?;
     Ok(())
 }
