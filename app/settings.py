@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import threading
 
 SETTINGS_FILE = "settings.json"
 APP_NAME = "PyDSPMeters"
@@ -40,11 +41,26 @@ class SettingsManager:
                 print(f"Error loading settings: {e}")
         return {}
 
+    _save_lock = threading.Lock()
+
     @classmethod
     def save(cls, settings):
+        """
+        Saves settings to disk using a thread-safe, atomic write strategy.
+        """
         path = cls.get_settings_path()
-        try:
-            with open(path, "w") as f:
-                json.dump(settings, f, indent=4)
-        except Exception as e:
-            print(f"Error saving settings: {e}")
+        with cls._save_lock:
+            try:
+                # Save to a temporary file first to prevent corruption if the app crashes during write
+                temp_path = path + ".tmp"
+                with open(temp_path, "w") as f:
+                    json.dump(settings, f, indent=4)
+                
+                # Atomic replace
+                if os.path.exists(path):
+                    os.replace(temp_path, path)
+                else:
+                    os.rename(temp_path, path)
+            except Exception as e:
+                import logging
+                logging.error(f"Settings: Failed to save to {path}: {e}")

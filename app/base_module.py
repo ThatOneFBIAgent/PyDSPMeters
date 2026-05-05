@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QFrame, QSizePolicy, QComboBox, QSlider, QCheckBox,
 )
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QTimer
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QIcon
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QIcon, QFontMetrics
 
 from app.theme import Colors, Fonts
 
@@ -232,48 +232,63 @@ class BaseModule(QWidget):
             self.move_mode_exit_requested.emit()
         super().mouseDoubleClickEvent(event)
 
-    @staticmethod
-    def get_responsive_font(font_func, w=None, h=None, text=None, min_size=5):
-        """
-        Returns a font scaled by the global TEXT_SCALE, but further reduced
-        if it doesn't fit within the given width/height constraints.
-        """
-        try:
-            if not callable(font_func):
-                return QFont()
-                
-            font = font_func() # Gets the global scaled font
-            size = font.pointSize()
-            if size <= 0: size = 8 # Safety fallback
-            
-            # If dimensions are too small to calculate, just return the base font
-            if (w is not None and w <= 0) or (h is not None and h <= 0):
-                return font
+    _font_cache = {}
 
-            # Vertical constraint check
-            if h is not None and h < size * 1.6:
-                size = max(min_size, int(h * 0.6))
-                font.setPointSize(size)
+    _font_cache = {}
+
+    @staticmethod
+    def get_responsive_font(base_font_func, target_w, target_h, text, max_size=None, min_size=4.0):
+        """
+        Calculates a high-precision font size that fits constraints.
+        Uses floating point sizes for smooth scaling transitions.
+        """
+        base_font = base_font_func()
+        # Get the 'design' size (the size intended at 1.0 scale)
+        # We use floating point for the native size to allow sub-pixel scaling
+        native_size = base_font.pointSizeF() / Fonts.TEXT_SCALE
+        
+        if max_size is None:
+            max_size = native_size
+            
+        # Cache key includes the scale for sub-pixel accuracy
+        cache_key = (base_font_func.__name__, int(target_w), int(target_h), text, float(max_size), float(min_size), float(Fonts.TEXT_SCALE))
+        if cache_key in BaseModule._font_cache:
+            return BaseModule._font_cache[cache_key]
+
+        # Start with the ideal scaled size
+        ideal_size = max_size * Fonts.TEXT_SCALE
+        base_font.setPointSizeF(ideal_size)
+        
+        # Check if it fits as-is
+        m = QFontMetrics(base_font)
+        rect = m.boundingRect(text)
+        
+        if rect.width() <= target_w and rect.height() <= target_h:
+            # Fits perfectly at the intended scale
+            BaseModule._font_cache[cache_key] = base_font
+            return base_font
+            
+        # If it doesn't fit, we perform a precise binary search for the best float size
+        low = min_size * Fonts.TEXT_SCALE
+        high = ideal_size
+        best_fsize = low
+        
+        # 10 iterations give us roughly 0.1pt precision which is very smooth
+        for _ in range(10):
+            mid = (low + high) / 2
+            base_font.setPointSizeF(mid)
+            m = QFontMetrics(base_font)
+            rect = m.boundingRect(text)
+            
+            if rect.width() <= target_w and rect.height() <= target_h:
+                best_fsize = mid
+                low = mid
+            else:
+                high = mid
                 
-            # Horizontal constraint check (if text is provided)
-            if text and w is not None:
-                from PySide6.QtGui import QFontMetrics
-                fm = QFontMetrics(font)
-                # Avoid infinite loops if horizontalAdvance is broken
-                limit = 20
-                txt_str = str(text)
-                while fm.horizontalAdvance(txt_str) > w * 0.95 and size > min_size and limit > 0:
-                    size -= 1
-                    font.setPointSize(size)
-                    fm = QFontMetrics(font)
-                    limit -= 1
-                    
-            return font
-        except Exception as e:
-            import traceback
-            print(f"Responsive Font Error for '{text}': {e}")
-            traceback.print_exc()
-            return font_func() if callable(font_func) else QFont()
+        base_font.setPointSizeF(best_fsize)
+        BaseModule._font_cache[cache_key] = base_font
+        return base_font
 
     def self_test(self):
         """Perform a basic health check on the module."""

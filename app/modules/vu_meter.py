@@ -302,6 +302,7 @@ class VUMeterModule(BaseModule):
             painter.drawEllipse(QPointF(12, 12), 4, 4)
             if w > 85:
                 painter.setPen(QColor(Colors.TEXT_DIM))
+                painter.setFont(self.get_responsive_font(Fonts.small, 40, 12, "PEAK"))
                 painter.drawText(QRectF(18, 6, 40, 12), Qt.AlignLeft, "PEAK")
                 
         if self._show_clip:

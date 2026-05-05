@@ -515,7 +515,7 @@ class MainWindow(QMainWindow):
         # 2. Main Application Settings
         add_slider_setting(menu, "Input Overdrive:", 0, 200, self.audio_engine.gain_multiplier, 
                            lambda v: setattr(self.audio_engine, "gain_multiplier", v), is_float=True)
-        add_slider_setting(menu, "Global Label Scale:", 50, 200, Fonts.TEXT_SCALE, 
+        add_slider_setting(menu, "Global Label Scale:", 25, 300, Fonts.TEXT_SCALE, 
                            self._update_text_scale, is_float=True)
         
         menu.addSeparator()
