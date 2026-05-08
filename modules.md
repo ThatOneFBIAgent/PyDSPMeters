@@ -57,11 +57,17 @@ Monitors loudness levels according to broadcast and mastering standards.
 Analyzes the stereo image, phase, and correlation.
 
 *   **Display Mode**:
-    *   *Vectorscope*: Standard M/S rotated view.
+    *   *Vectorscope*: Standard M/S rotated view (L+R on Y, L-R on X).
     *   *Lissajous*: X/Y representation (Left vs Right).
 *   **Guide Map**: Background reference shapes (*None*, *Rhombus*, *Circle*).
 *   **Zoom**: Amplitude multiplier (0.5x to 4.0x).
 *   **Color**: *Static*, *Multi-Band* (Frequency-based coloring), or *Multi-Band (RGB)*.
+*   **Width Gain**: Artificially expands the stereo width of the trace. Use this to "explode" the signal for better visibility of wide images. **Hard-clipped to the guide map boundaries.**
+*   **Max Dots (Density)**: Sets the point-cloud resolution (256 to 8192). Higher values provide a premium, dense look.
+*   **Correlation Smoothing**: Adjusts the ballistics of the correlation meter.
+    *   *None (Fast)*: Instant response.
+    *   *Natural*: Professional balanced smoothing (includes a "ghost" peak-hold indicator).
+    *   *Smooth / Slow*: High-persistence for tracking long-term phase trends.
 *   **Correlation**: Toggles between a single summary bar or 4 frequency-banded phase bars.
 *   **Minimal Mode**: Hides labels and correlation bars for a pure graph view.
 *   **Show Labels**: Toggles axis text markers.

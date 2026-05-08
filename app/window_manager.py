@@ -229,6 +229,78 @@ class ResizeGrip(QWidget):
             self._window.snap_to_edge()
 
 
+class WelcomeDialog(QFrame):
+    """Themed welcome box with startup tips."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(320, 200)
+        self.setObjectName("welcomeDialog")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
+        
+        title = QLabel("Welcome to PyDSPMeters")
+        title.setStyleSheet(f"color: {Colors.ACCENT}; font-size: 14pt; font-weight: bold; background: transparent;")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+        
+        tips = QLabel(
+            "• <b>Right-click</b> anywhere for settings\n"
+            "• <b>Double-click</b> titles to hide/show\n"
+            "• <b>Move Mode</b> (✥) to rearrange layout\n"
+            "• <b>AppBar Mode</b> to dock to screen edge"
+        )
+        tips.setStyleSheet(f"color: {Colors.TEXT}; font-size: 9pt; background: transparent;")
+        tips.setWordWrap(True)
+        layout.addWidget(tips)
+        
+        layout.addStretch()
+        
+        btn = QPushButton("Got it!")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.clicked.connect(self.fade_out_anim)
+        layout.addWidget(btn, 0, Qt.AlignCenter)
+        
+        self.update_theme()
+        
+        # Center in parent
+        if parent:
+            self.move(parent.rect().center() - self.rect().center())
+
+    def update_theme(self):
+        self.setStyleSheet(f"""
+            #welcomeDialog {{ 
+                background: {Colors.BG_DARK}; 
+                border: 2px solid {Colors.BORDER_ACCENT}; 
+                border-radius: 8px;
+            }}
+            QLabel {{ color: {Colors.TEXT}; }}
+            QPushButton {{
+                background: {Colors.ACCENT_DIM};
+                color: {Colors.TEXT_BRIGHT};
+                border: none;
+                padding: 6px 20px;
+                font-weight: bold;
+                border-radius: 4px;
+            }}
+            QPushButton:hover {{ background: {Colors.ACCENT}; }}
+        """)
+
+    def fade_out_anim(self):
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        from PySide6.QtCore import QPropertyAnimation
+        self.eff = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.eff)
+        self.anim = QPropertyAnimation(self.eff, b"opacity")
+        self.anim.setDuration(250)
+        self.anim.setStartValue(1.0)
+        self.anim.setEndValue(0.0)
+        self.anim.finished.connect(self.deleteLater)
+        self.anim.start()
+
+
 class MainWindow(QMainWindow):
     """
     Main application window. Frameless, always-on-top,
@@ -248,11 +320,36 @@ class MainWindow(QMainWindow):
         )
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setMinimumSize(40, 40)
-        self.resize(300, 650)
-        self._loading_settings = True
-        self._is_ready = False # Track if fully initialized
-        self._appbar_active = False
-        self._appbar_edge = "right" # Which edge to dock to
+        
+        # Detect First Run
+        self._is_first_run = not self._settings
+        
+        if self._is_first_run:
+            # Polished default layout for first-time users
+            self.resize(650, 250)
+            self._layout_vertical = False # Side-by-side bar
+            self._show_headers = False
+            self._auto_hide_ui = True
+            default_modules = ["loudness", "stereometer", "spectrum"]
+            
+            # Setup initial settings object
+            self._settings = {
+                "window": {
+                    "width": 650, "height": 250,
+                    "vertical_layout": False,
+                    "show_headers": False,
+                    "auto_hide_ui": True,
+                    "divider_width": 4, "divider_opacity": 100
+                },
+                "modules": default_modules,
+                "ui": {"theme": "Midnight", "text_scale": 1.0}
+            }
+        else:
+            win_s = self._settings.get("window", {})
+            self.resize(win_s.get("width", 300), win_s.get("height", 650))
+            self._layout_vertical = win_s.get("vertical_layout", True)
+            self._show_headers = win_s.get("show_headers", True)
+            self._auto_hide_ui = win_s.get("auto_hide_ui", False)
         
         # Loading Overlay (Internal window fade-in)
         self._loading_overlay = LoadingOverlay(self)
@@ -322,6 +419,9 @@ class MainWindow(QMainWindow):
         self._auto_hide_ui = win_s.get("auto_hide_ui", False)
         self._appbar_edge = win_s.get("appbar_edge", "right")
         self._appbar_saved = win_s.get("appbar_active", False)
+        self._appbar_active = False # Will be restored in finish_loading
+        self._loading_settings = True
+        self._is_ready = False
         self._update_ghost_mode()
         
         # Divider settings (must be after apply_theme to use correct BORDER color)
@@ -345,7 +445,7 @@ class MainWindow(QMainWindow):
         self._autosave_timer.start(60000)
         
         if module_items is None:
-            module_items = ["oscilloscope", "loudness", "spectrum"]
+            module_items = ["spectrum", "stereometer", "loudness"]
             
         for i, item in enumerate(module_items):
             m_key = item if isinstance(item, str) else item.get("key")
@@ -384,6 +484,12 @@ class MainWindow(QMainWindow):
             # Immediate toggle during startup to avoid 'pushed down' glitch
             # Slight delay to ensure window handle is fully established and mapped
             self._toggle_appbar(True, delay=100)
+
+        # Show Welcome if first run
+        if getattr(self, "_is_first_run", False):
+            self.welcome = WelcomeDialog(self)
+            self.welcome.show()
+            self.welcome.raise_()
 
     def _start_audio_stream(self):
         """Find best device match and start the audio stream."""

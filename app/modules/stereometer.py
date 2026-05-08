@@ -3,8 +3,9 @@ Stereometer Module: Lissajous / Linear / Scaled stereo display with correlation 
 """
 
 import numpy as np
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPixmap
 from PySide6.QtCore import Qt, QPointF, QRectF
+from scipy.signal import get_window
 
 from app.base_module import BaseModule
 from app.modules import register_module
@@ -27,18 +28,20 @@ class StereometerModule(BaseModule):
         self._minimal_mode = False
         self._corr_pos = "Bottom"
         
-        self._left = np.zeros(1024)
-        self._right = np.zeros(1024)
-        self._corr = 0.0
-        self._mb_corr = {"low": 0.0, "mid": 0.0, "high": 0.0, "overall": 0.0}
-        self._minimal_mode = False
-        self._halved_view = False
-        self._corr_pos = "Bottom"
+        self._width_gain = 1.0 
+        self._persistence = 0.5 
+        self._max_dots = 1024
+        self._window_alpha = 0.1 
+        self._window_cache = {}
+        self._buffer = None
+        
         self._left = np.zeros(1024, dtype=np.float32)
         self._right = np.zeros(1024, dtype=np.float32)
         self._corr = 0.0
         self._mb_corr = {"low": 0.0, "mid": 0.0, "high": 0.0, "overall": 0.0}
         self._multiband = MultiBandFilter(sample_rate=audio_engine.sample_rate)
+        self._corr_peak = 0.0
+        self._mb_corr_peak = {}
         self.module_key = "stereometer"
         super().__init__(audio_engine, title="Stereometer", parent=parent)
         self.canvas.set_render_func(self._render)
@@ -50,6 +53,9 @@ class StereometerModule(BaseModule):
             "corr_mode": self._corr_mode,
             "guide_mode": self._guide_mode,
             "zoom": self._zoom,
+            "width_gain": self._width_gain,
+            "persistence": self._persistence,
+            "max_dots": self._max_dots,
             "show_labels": self._show_labels,
             "minimal_mode": self._minimal_mode,
             "halved_view": self._halved_view,
@@ -70,11 +76,14 @@ class StereometerModule(BaseModule):
         self._corr_mode = crm if crm in self._VALID_CORR_MODES else "Single-Band"
         gm = settings.get("guide_mode", self._guide_mode)
         self._guide_mode = gm if gm in self._VALID_GUIDE_MODES else "Rhombus"
-        self._zoom = settings.get("zoom", self._zoom)
-        self._show_labels = settings.get("show_labels", self._show_labels)
-        self._minimal_mode = settings.get("minimal_mode", self._minimal_mode)
-        self._halved_view = settings.get("halved_view", self._halved_view)
-        self._corr_pos = settings.get("corr_pos", self._corr_pos)
+        self._zoom = float(settings.get("zoom", self._zoom))
+        self._width_gain = float(settings.get("width_gain", self._width_gain))
+        self._persistence = float(settings.get("persistence", self._persistence))
+        self._max_dots = int(settings.get("max_dots", self._max_dots))
+        self._show_labels = bool(settings.get("show_labels", self._show_labels))
+        self._minimal_mode = bool(settings.get("minimal_mode", self._minimal_mode))
+        self._halved_view = bool(settings.get("halved_view", self._halved_view))
+        self._corr_pos = str(settings.get("corr_pos", self._corr_pos))
 
     def build_context_menu(self, menu):
         from PySide6.QtGui import QActionGroup
@@ -99,13 +108,39 @@ class StereometerModule(BaseModule):
 
         zm = menu.addMenu("Zoom")
         zg = QActionGroup(self)
-        # "it looks ugly" look this has a tendency to jump a lot even at 2x zoom, i'm giving user granularity.
         for z in [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0]:
             a = zm.addAction(f"{z}x")
             a.setCheckable(True)
-            a.setChecked(z == self._zoom)
-            a.triggered.connect(lambda checked, v=z: setattr(self, "_zoom", v))
+            a.setChecked(abs(z - self._zoom) < 0.01)
+            a.triggered.connect(lambda checked, v=z: (setattr(self, "_zoom", v), self.canvas.update()))
             zg.addAction(a)
+
+        wm = menu.addMenu("Width Gain")
+        wg = QActionGroup(self)
+        for w in [1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]:
+            a = wm.addAction(f"{w}x")
+            a.setCheckable(True)
+            a.setChecked(abs(w - self._width_gain) < 0.01)
+            a.triggered.connect(lambda checked, v=w: (setattr(self, "_width_gain", v), self.canvas.update()))
+            wg.addAction(a)
+
+        pm = menu.addMenu("Correlation Smoothing")
+        pg = QActionGroup(self)
+        for p, label in [(0.0, "None (Fast)"), (0.5, "Natural"), (0.8, "Smooth"), (0.95, "Slow")]:
+            a = pm.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(abs(p - self._persistence) < 0.01)
+            a.triggered.connect(lambda checked, v=p: (setattr(self, "_persistence", v), self.canvas.update()))
+            pg.addAction(a)
+            
+        sm = menu.addMenu("Max Dots (Density)")
+        sg = QActionGroup(self)
+        for d in [256, 512, 1024, 2048, 4096, 8192]:
+            a = sm.addAction(str(d))
+            a.setCheckable(True)
+            a.setChecked(d == self._max_dots)
+            a.triggered.connect(lambda checked, v=d: (setattr(self, "_max_dots", v), self.canvas.update()))
+            sg.addAction(a)
 
         cm = menu.addMenu("Color")
         cg = QActionGroup(self)
@@ -140,25 +175,65 @@ class StereometerModule(BaseModule):
         a = menu.addAction("Minimal Mode")
         a.setCheckable(True)
         a.setChecked(self._minimal_mode)
-        a.triggered.connect(lambda checked: setattr(self, "_minimal_mode", checked))
+        a.triggered.connect(lambda checked: (setattr(self, "_minimal_mode", checked), self.canvas.update()))
 
         a = menu.addAction("Show Labels")
         a.setCheckable(True)
         a.setChecked(self._show_labels)
-        a.triggered.connect(lambda checked: setattr(self, "_show_labels", checked))
+        a.triggered.connect(lambda checked: (setattr(self, "_show_labels", checked), self.canvas.update()))
 
         a = menu.addAction("Halved View")
         a.setCheckable(True)
         a.setChecked(self._halved_view)
-        a.triggered.connect(lambda checked: setattr(self, "_halved_view", checked))
+        a.triggered.connect(lambda checked: (setattr(self, "_halved_view", checked), self.canvas.update()))
 
     def on_audio_data(self, data: np.ndarray):
-        self._left = data[:, 0].copy()
-        self._right = data[:, 1].copy() if data.shape[1] > 1 else data[:, 0].copy()
-        self._corr = correlation(self._left, self._right)
+        n = len(data)
+        l_raw = data[:, 0].copy()
+        r_raw = data[:, 1].copy() if data.shape[1] > 1 else data[:, 0].copy()
+        
+        # 1. Apply Width Gain (Mid/Side processing)
+        if self._width_gain != 1.0:
+            mid = (l_raw + r_raw) * 0.5
+            side = (l_raw - r_raw) * 0.5 * self._width_gain
+            l_proc = mid + side
+            r_proc = mid - side
+        else:
+            l_proc, r_proc = l_raw, r_raw
+
+        # 2. Apply Custom Tukey Window (Very thin margin FFT window style)
+        # This prevents sharp jumps at the edges of the buffer
+        cache_key = (n, self._window_alpha)
+        if cache_key in self._window_cache:
+            win = self._window_cache[cache_key]
+        else:
+            win = get_window(('tukey', self._window_alpha), n, fftbins=False).astype(np.float32)
+            self._window_cache[cache_key] = win
+            
+        self._left = (l_proc * win)
+        self._right = (r_proc * win)
+        
+        # 3. Smoothed Correlation
+        new_corr = correlation(l_raw, r_raw)
+        alpha = 1.0 - self._persistence
+        if self._persistence == 0: alpha = 1.0
+        
+        self._corr = self._corr * (1.0 - alpha) + new_corr * alpha
+        # Peak/Ghost decay
+        self._corr_peak = max(abs(self._corr_peak) * 0.95, abs(self._corr)) * np.sign(self._corr if abs(self._corr) > abs(self._corr_peak) * 0.95 else self._corr_peak)
+        # Simplify peak logic: just a slow-following "shadow"
+        if not hasattr(self, "_corr_ghost"): self._corr_ghost = self._corr
+        self._corr_ghost = self._corr_ghost * 0.9 + self._corr * 0.1
+        
         if self._corr_mode == "Multi-Band":
-            self._mb_corr = multiband_correlation(
-                self._left, self._right, self.audio_engine.sample_rate)
+            new_mb = multiband_correlation(
+                l_raw, r_raw, self.audio_engine.sample_rate)
+            if not hasattr(self, "_mb_corr_ghost"): self._mb_corr_ghost = {}
+            for k in new_mb:
+                old = self._mb_corr.get(k, 0.0)
+                self._mb_corr[k] = old * (1.0 - alpha) + new_mb[k] * alpha
+                old_g = self._mb_corr_ghost.get(k, self._mb_corr[k])
+                self._mb_corr_ghost[k] = old_g * 0.92 + self._mb_corr[k] * 0.08
 
     def _render(self, painter, w, h):
         corr_size = 28 if not self._minimal_mode else 0
@@ -214,6 +289,18 @@ class StereometerModule(BaseModule):
             else:
                 painter.drawEllipse(QPointF(cx, cy), radius, radius)
 
+        # 3. Trace (Drawn directly, no persistence)
+        left, right = self._left, self._right
+        if self._color_mode.startswith("Multi-Band"):
+            low_l, mid_l, high_l = self._multiband.split(left)
+            low_r, mid_r, high_r = self._multiband.split(right)
+            cols = ["#FF3333", "#33FF33", "#3388FF"] if self._color_mode == "Multi-Band (RGB)" else [Colors.BAND_LOW, Colors.BAND_MID, Colors.BAND_HIGH]
+            for bl, br, col in zip([low_l, mid_l, high_l], [low_r, mid_r, high_r], cols):
+                self._draw_trace(painter, bl, br, cx, cy, radius, QColor(col), 160)
+        else:
+            col = QColor(Colors.ACCENT)
+            self._draw_trace(painter, left, right, cx, cy, radius, col, 200)
+
         # Labels
         if self._show_labels:
             painter.setFont(Fonts.small())
@@ -238,24 +325,14 @@ class StereometerModule(BaseModule):
                     painter.setFont(self.get_responsive_font(Fonts.small, 16, 14, "S"))
                     painter.drawText(QRectF(cx - radius - 18, cy - 7, 16, 14), Qt.AlignCenter, "S")
                     painter.drawText(QRectF(cx + radius + 2, cy - 7, 16, 14), Qt.AlignCenter, "S")
+                else:
                     painter.setFont(self.get_responsive_font(Fonts.small, 20, 14, "L"))
                     painter.drawText(QRectF(cx - 10, cy - radius - 16, 20, 14), Qt.AlignCenter, "L")
                     painter.drawText(QRectF(cx - 10, cy + radius + 2, 20, 14), Qt.AlignCenter, "R")
+                    painter.setFont(self.get_responsive_font(Fonts.small, 16, 14, "L"))
+                    painter.drawText(QRectF(cx - radius - 18, cy - 7, 16, 14), Qt.AlignCenter, "L")
                     painter.setFont(self.get_responsive_font(Fonts.small, 16, 14, "R"))
-                    painter.drawText(QRectF(cx - radius - 18, cy - 7, 16, 14), Qt.AlignCenter, "R")
                     painter.drawText(QRectF(cx + radius + 2, cy - 7, 16, 14), Qt.AlignCenter, "R")
-
-        left, right = self._left, self._right
-
-        if self._color_mode.startswith("Multi-Band"):
-            low_l, mid_l, high_l = self._multiband.split(left)
-            low_r, mid_r, high_r = self._multiband.split(right)
-            cols = ["#FF3333", "#33FF33", "#3388FF"] if self._color_mode == "Multi-Band (RGB)" else [Colors.BAND_LOW, Colors.BAND_MID, Colors.BAND_HIGH]
-            for bl, br, col in zip([low_l, mid_l, high_l], [low_r, mid_r, high_r], cols):
-                self._draw_trace(painter, bl, br, cx, cy, radius, QColor(col), 100)
-        else:
-            col = QColor(Colors.ACCENT)
-            self._draw_trace(painter, left, right, cx, cy, radius, col, 160)
 
         # Correlation bar
         if not self._minimal_mode:
@@ -283,10 +360,22 @@ class StereometerModule(BaseModule):
 
             if self._corr_mode == "Single-Band":
                 val = self._corr
+                ghost = getattr(self, "_corr_ghost", val)
+                
+                # Ghost
+                col_g = QColor(Colors.ACCENT_DIM); col_g.setAlpha(100)
+                painter.setBrush(QBrush(col_g)); painter.setPen(Qt.NoPen)
+                if is_vert_corr:
+                    py = bar_rect.y() + bar_rect.height() * (1.0 - (ghost + 1) / 2.0)
+                    painter.drawRoundedRect(QRectF(bar_rect.x() + 2, py - 2, bar_rect.width() - 4, 4), 1, 1)
+                else:
+                    px = bar_rect.x() + (ghost + 1) / 2 * bar_rect.width()
+                    painter.drawRoundedRect(QRectF(px - 2, bar_rect.y() + 2, 4, bar_rect.height() - 4), 1, 1)
+
+                # Active
                 col = QColor(Colors.GREEN) if val > 0 else QColor(Colors.RED)
                 painter.setBrush(QBrush(col)); painter.setPen(Qt.NoPen)
                 if is_vert_corr:
-                    # Vertical bar: +1 is Top, -1 is Bottom
                     py = bar_rect.y() + bar_rect.height() * (1.0 - (val + 1) / 2.0)
                     painter.drawRoundedRect(QRectF(bar_rect.x() + 1, py - 3, bar_rect.width() - 2, 6), 2, 2)
                 else:
@@ -296,26 +385,27 @@ class StereometerModule(BaseModule):
                 n_bands = 4
                 bands = [("low", Colors.BAND_LOW), ("mid", Colors.BAND_MID), ("high", Colors.BAND_HIGH), ("overall", Colors.ACCENT)]
                 
-                # Always draw as 4 vertical segments (like the loudness module)
                 sub_bw = bar_rect.width() / n_bands
                 for j, (name, col_hex) in enumerate(bands):
                     val = self._mb_corr.get(name, 0.0)
+                    ghost = getattr(self, "_mb_corr_ghost", {}).get(name, val)
                     sub_x = bar_rect.x() + j * sub_bw
                     
-                    # Background for the sub-segment
                     painter.fillRect(QRectF(sub_x + 1, bar_rect.y(), sub_bw - 2, bar_rect.height()), QColor(Colors.BG_DARKEST))
                     
-                    # Zero-line for the segment
                     mid_y = bar_rect.y() + bar_rect.height() / 2
                     painter.setPen(QPen(QColor(Colors.GRID), 0.5))
                     painter.drawLine(int(sub_x + 1), int(mid_y), int(sub_x + sub_bw - 1), int(mid_y))
                     
-                    # Indicator
-                    painter.setBrush(QBrush(QColor(col_hex))); painter.setPen(Qt.NoPen)
-                    # Mapping: +1 is Top, -1 is Bottom
+                    # Ghost
+                    col_g = QColor(col_hex); col_g.setAlpha(80)
+                    painter.setBrush(QBrush(col_g)); painter.setPen(Qt.NoPen)
+                    py_g = bar_rect.y() + bar_rect.height() * (1.0 - (ghost + 1) / 2.0)
+                    painter.drawRect(QRectF(sub_x + 2, py_g - 1, sub_bw - 4, 2))
+
+                    # Active
+                    painter.setBrush(QBrush(QColor(col_hex)))
                     py = bar_rect.y() + bar_rect.height() * (1.0 - (val + 1) / 2.0)
-                    
-                    # Ensure indicator has a visible width/height even in tiny modules
                     ind_w = max(2.0, sub_bw - 4)
                     ind_x = sub_x + (sub_bw - ind_w) / 2
                     painter.drawRoundedRect(QRectF(ind_x, py - 2, ind_w, 4), 1, 1)
@@ -335,32 +425,84 @@ class StereometerModule(BaseModule):
 
     def _draw_trace(self, painter, left, right, cx, cy, radius, color, alpha):
         n = len(left)
-        # Optimized sample density
-        step = max(1, n // 1024)
+        step = max(1, n // self._max_dots)
         
         l_seg = left[::step] * self._zoom
         r_seg = right[::step] * self._zoom
 
+        painter.save()
+        painter.setOpacity(alpha / 255.0)
+
         if self._display_mode == "Vectorscope":
             # 1. Vectorscope (Point Cloud) - Shows Stereo Density
-            # Best for seeing balance and "weight" without polyline clutter.
-            xs = cx + (l_seg - r_seg) * 0.5 * radius
-            ys = cy - (l_seg + r_seg) * 0.5 * radius
+            dx = (l_seg - r_seg) * 0.5
+            dy = (l_seg + r_seg) * 0.5
+            
+            # Limiting to Guide Map (Default to Rhombus even if None)
+            if self._guide_mode == "Circle":
+                mag = np.sqrt(dx**2 + dy**2)
+                mask = mag > 1.0
+                dx[mask] /= mag[mask]
+                dy[mask] /= mag[mask]
+            else:
+                # Rhombus is the standard M/S boundary
+                mag = np.abs(dx) + np.abs(dy)
+                mask = mag > 1.0
+                dx[mask] /= mag[mask]
+                dy[mask] /= mag[mask]
+            
+            xs = cx + dx * radius
+            ys = cy - dy * radius
             
             points = [QPointF(xs[i], ys[i]) for i in range(len(xs))]
-            if not points: return
+            if not points: 
+                painter.restore()
+                return
             
-            painter.setPen(QPen(QColor(color) if color else QColor(Colors.ACCENT), 1.0))
+            # Draw a slight glow/blur by drawing multiple times
+            painter.setPen(QPen(QColor(color), 2.5))
+            painter.setOpacity(alpha / 255.0 * 0.3)
+            painter.drawPoints(points)
+            
+            painter.setPen(QPen(QColor(color), 1.0))
+            painter.setOpacity(alpha / 255.0)
             painter.drawPoints(points)
             
         else:
             # 2. Lissajous (Polyline) - Shows Phase Curves
-            # Best for seeing trajectories and "fancy curves" of pure tones.
-            xs = cx + r_seg * radius
-            ys = cy - l_seg * radius
+            dx = right[::step] * self._zoom
+            dy = left[::step] * self._zoom
+            
+            # Limiting to Guide Map (Default to Rhombus even if None)
+            if self._guide_mode == "Circle":
+                mag = np.sqrt(dx**2 + dy**2)
+                mask = mag > 1.0
+                dx[mask] /= mag[mask]
+                dy[mask] /= mag[mask]
+            else:
+                # Square/Rhombus boundary
+                mag = np.abs(dx) + np.abs(dy)
+                mask = mag > 1.0
+                dx[mask] /= mag[mask]
+                dy[mask] /= mag[mask]
+            
+            xs = cx + dx * radius
+            ys = cy - dy * radius
             
             points = [QPointF(xs[i], ys[i]) for i in range(len(xs))]
-            if len(points) < 2: return
+            if len(points) < 2: 
+                painter.restore()
+                return
             
-            painter.setPen(QPen(QColor(color) if color else QColor(Colors.ACCENT), 1.0))
+            # Glow
+            pen = QPen(QColor(color), 2.0)
+            pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(pen)
+            painter.setOpacity(alpha / 255.0 * 0.4)
             painter.drawPolyline(points)
+            
+            painter.setPen(QPen(QColor(color), 1.0))
+            painter.setOpacity(alpha / 255.0)
+            painter.drawPolyline(points)
+            
+        painter.restore()
