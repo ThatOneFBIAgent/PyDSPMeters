@@ -151,6 +151,8 @@ To fix this the most stable, non hacky approach is to downgrade to an earlier bu
 
 Fixes are available, but modifying sounddevice.py is at your own expense.
 
+It is also worth noting that some AVs might flag the .exe as malicious. Don't worry this is a known pyinstaller/nuitka (or other compilers) issue when dealing with onefile/standalones executables. You can inspect the code and if you are that paranoid then feel free to build it yourself from "scratch" (maturin + compiler)
+
 ✝: Unfortunately I cannot test the linux build myself, if it does not work, please feel free to submit a PR/Open an issue on the github page.
 
 ## 📜 License
