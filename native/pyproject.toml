@@ -15,7 +15,7 @@ dynamic = ["version"]
 [tool.maturin]
 features = ["pyo3/abi3-py38"]
 module-name = "dsp_accel"
-compatibility = "abi3"
+
 
 [tool.cibuildwheel]
 build-frontend = "pip"
