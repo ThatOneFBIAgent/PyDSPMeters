@@ -24,7 +24,7 @@ build = "cp38-*"
 skip = "cp36-* cp37-* cp39-* cp310-* cp311-* cp312-* cp313-* pp*"
 
 [tool.cibuildwheel.linux]
-before-all = "curl https://sh.rustup.rs -sSf | sh -s -- -y"
+before-all = "yum install -y libatomic || apt-get install -y libatomic1 || true; curl https://sh.rustup.rs -sSf | sh -s -- -y"
 environment = { PATH = "$PATH:$HOME/.cargo/bin" }
 
 [tool.cibuildwheel.windows]
