@@ -30,10 +30,9 @@ jobs:
         uses: pypa/cibuildwheel@v2.21.3
         env:
           CIBW_BUILD: cp38-*
-+          # Supports both Intel and AMD (64-bit and 32-bit)
-+          CIBW_ARCHS_LINUX: x86_64 i686
-+          CIBW_ARCHS_WINDOWS: AMD64 x86
-
+          # Supports both Intel and AMD (64-bit and 32-bit)
+          CIBW_ARCHS_LINUX: x86_64 i686
+          CIBW_ARCHS_WINDOWS: AMD64 x86
         with:
           package-dir: native
 
