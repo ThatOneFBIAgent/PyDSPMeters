@@ -104,6 +104,8 @@ pythonw "path/to/main.pyw"
 PyDSPMeters includes a custom-built Rust crate (`dsp_accel`) using `PyO3` and `maturin` that drastically accelerates DSP processing and display buffering. 
 The application includes a graceful fallback system—if the Rust module is not compiled or fails to load, it will seamlessly fall back to pure Python/NumPy logic (meaning the app will always run, just slightly slower).
 
+You can build the native module using the following steps, but pre-compiled wheels are available in the wheels/ folder, which you can do `pip install --find-links ./wheels dsp_accel` (it'll automatically pick the right one for your system).
+
 ### Building the Native Module
 If you are developing or running from source and want maximum performance, you must compile the Rust crate. You will need:
 1. [Rust Toolchain](https://rustup.rs/) (cargo/rustc)

@@ -4,3 +4,6 @@ numpy>=1.24.0
 scipy>=1.10.0
 SoundFile>=0.12.0
 pytest>=7.0.0
+
+# Don't forget to install the precompiled wheels:
+# pip install --find-links ./wheels dsp_accel
