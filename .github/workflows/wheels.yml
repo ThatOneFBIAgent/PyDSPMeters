@@ -4,7 +4,13 @@ on:
   push:
     branches: [main, master]
     tags: ['*']
+    paths:
+      - 'native/**'
+      - '.github/workflows/wheels.yml'
   pull_request:
+    paths:
+      - 'native/**'
+      - '.github/workflows/wheels.yml'
   workflow_dispatch:
 
 jobs:
