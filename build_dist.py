@@ -3,36 +3,67 @@ import sys
 import subprocess
 import shutil
 
-# noqa
-# currently trying to get this to work, as settings.json isn't being saved for some reason
-# you're welcome to help
+# --- ANSI Colors for Polished CMD Output ---
+class Colors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
 
-def build():
-    print("--- Starting PyDSPMeters Nuitka Build Process ---")
-    
-    # 1. Verification
-    entry_point = "main.pyw"
-    if not os.path.exists(entry_point):
-        print(f"Error: Could not find {entry_point}")
-        return
+def print_step(msg):
+    print(f"\n{Colors.OKBLUE}{Colors.BOLD}>>> {msg}{Colors.ENDC}")
 
-    # 2. Icon Discovery
-    icon_path = None
-    for root, dirs, files in os.walk("."):
-        # Stay within root (don't go up)
-        if ".." in root: continue
-        for file in files:
+def print_success(msg):
+    print(f"{Colors.OKGREEN}✓ {msg}{Colors.ENDC}")
+
+def print_warning(msg):
+    print(f"{Colors.WARNING}! {msg}{Colors.ENDC}")
+
+def print_error(msg):
+    print(f"{Colors.FAIL}✗ {msg}{Colors.ENDC}")
+
+def find_icon():
+    # Only search known safe directories rather than entire tree
+    search_dirs = [".", "app", "assets"]
+    for d in search_dirs:
+        if not os.path.exists(d): continue
+        for file in os.listdir(d):
             if file.endswith(".ico"):
-                choice = input(f"Do you wish to add '{file}' as an icon for the executable? (y/n): ").lower()
+                icon_path = os.path.join(d, file)
+                choice = input(f"{Colors.OKCYAN}? Found icon '{icon_path}'. Use this for the executable? (y/n): {Colors.ENDC}").strip().lower()
                 if choice == 'y':
-                    icon_path = os.path.join(root, file)
-                    break
-        if icon_path: break
-        
-    # 3. Command Construction
+                    return os.path.abspath(icon_path)
+    return None
+
+def check_tool(tool_name):
+    try:
+        subprocess.run(
+            [sys.executable, "-m", tool_name, "--version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+def verify_build():
+    exe_name = "PyDSPMeters.exe" if sys.platform == "win32" else "PyDSPMeters"
+    exe_path = os.path.join("dist", exe_name)
+    if os.path.exists(exe_path):
+        print_success(f"Verified: {exe_path} exists!")
+        return True
+    return False
+
+def build_nuitka(entry_point, icon_path):
+    print_step("Compiling with Nuitka (Max Performance & Compression)...")
     cmd = [
         sys.executable, "-m", "nuitka",
-        "--standalone",
+        "--onefile",  # Squeeze space into a single executable
         "--enable-plugin=pyside6",
         "--nofollow-import-to=PySide6.QtCharts",
         "--nofollow-import-to=PySide6.QtNetwork",
@@ -54,58 +85,107 @@ def build():
         "--windows-console-mode=disable",
         "--include-package=app",
         "--follow-imports",
-        "--output-filename=PyDSPMeters",
+        "--output-filename=PyDSPMeters.exe" if sys.platform == "win32" else "--output-filename=PyDSPMeters",
         "--output-dir=dist",
-        "--remove-output",
+        "--remove-output", # Note: This removes intermediate C cache, increasing recompilation time.
         entry_point
     ]
-    
     if icon_path:
-        cmd.append(f"--windows-icon-from-ico={icon_path}")
+        if sys.platform == "win32":
+            cmd.append(f"--windows-icon-from-ico={icon_path}")
+        elif sys.platform == "darwin":
+            cmd.append(f"--macos-app-icon={icon_path}")
 
-    print(f"Executing: {' '.join(cmd)}")
+    try:
+        subprocess.check_call(cmd)
+        if verify_build():
+            print_success("Nuitka build completed successfully!")
+            return True
+        else:
+            print_error("Nuitka command succeeded but executable was not found.")
+            return False
+    except subprocess.CalledProcessError:
+        print_error("Nuitka build failed. (Ensure you have a C++ compiler and zstandard installed).")
+        return False
+
+def build_pyinstaller(entry_point, icon_path):
+    print_step("Compiling with PyInstaller (Fallback mode)...")
+    cmd = [
+        sys.executable, "-m", "PyInstaller",
+        "--noconfirm",
+        "--onefile",
+        "--windowed",
+        "--name=PyDSPMeters",
+        "--distpath=dist",
+        "--workpath=build",
+        "--clean",
+        "--hidden-import=app",
+    ]
+    if icon_path:
+        cmd.append(f"--icon={icon_path}")
+        
+    cmd.append(entry_point)
     
     try:
-        # Run the build
         subprocess.check_call(cmd)
-        print("\n--- Build Successful! ---")
+        if verify_build():
+            print_success("PyInstaller build completed successfully!")
+            return True
+        else:
+            print_error("PyInstaller command succeeded but executable was not found.")
+            return False
+    except subprocess.CalledProcessError:
+        print_error("PyInstaller build failed.")
+        return False
+    finally:
+        # Clean up pyinstaller artifacts regardless of success/failure
+        if os.path.exists("PyDSPMeters.spec"):
+            os.remove("PyDSPMeters.spec")
+        if os.path.exists("build"):
+            shutil.rmtree("build", ignore_errors=True)
+
+def build():
+    # Enable ANSI colors on Windows CMD
+    if sys.platform == "win32":
+        os.system("")
         
-        # 4. Post-build Cleanup
-        # Nuitka in standalone mode creates a folder: dist/PyDSPMeters.dist
-        dist_folder = os.path.join("dist", "PyDSPMeters.dist")
-        
-        # If the folder doesn't exist (maybe Nuitka behaved differently), find it
-        if not os.path.exists(dist_folder):
-            for item in os.listdir("dist"):
-                if item.endswith(".dist"):
-                    dist_folder = os.path.join("dist", item)
-                    break
-        
-        print(f"Dist folder identified: {dist_folder}")
-        
-        # 5. Create ZIP for Installer/Distribution
-        zip_name = "PyDSPMeters_Standalone"
-        zip_dest = os.path.abspath(os.path.join("dist_zip", zip_name))
-        
-        # Ensure we don't zip into the source folder to avoid recursion
-        if os.path.exists("dist_zip"):
-            shutil.rmtree("dist_zip")
-        os.makedirs("dist_zip")
-        
-        print(f"Creating {zip_name}.zip in 'dist_zip'...")
-        # root_dir is the folder to zip, base_dir is the folder name inside the zip
-        shutil.make_archive(zip_dest, 'zip', root_dir=dist_folder)
-        
-        final_zip = zip_dest + ".zip"
-        print(f"ZIP created: {final_zip}")
-        print(f"\nYour standalone folder is located at: {dist_folder}")
-        print(f"Your distribution ZIP is located at: {final_zip}")
-        
-    except subprocess.CalledProcessError as e:
-        print(f"\n--- Build Failed! ---")
-        print("Tip: Ensure you have 'nuitka', 'zstandard', and a C++ compiler (like MinGW or MSVC) installed.")
-    except Exception as e:
-        print(f"An error occurred: {e}")
+    print(f"\n{Colors.HEADER}{Colors.BOLD}======================================{Colors.ENDC}")
+    print(f"{Colors.HEADER}{Colors.BOLD}   PyDSPMeters Distribution Builder   {Colors.ENDC}")
+    print(f"{Colors.HEADER}{Colors.BOLD}======================================{Colors.ENDC}\n")
+    
+    entry_point = "main.pyw"
+    if not os.path.exists(entry_point):
+        print_error(f"Could not find entry point: {entry_point}")
+        sys.exit(1)
+
+    icon_path = find_icon()
+    if icon_path:
+        print_success(f"Using icon: {icon_path}")
+    else:
+        print_warning("No icon selected or found.")
+
+    # Try Nuitka first
+    if check_tool("nuitka"):
+        success = build_nuitka(entry_point, icon_path)
+        if success:
+            sys.exit(0)
+        else:
+            print_warning("Nuitka failed. Attempting fallback to PyInstaller...")
+    else:
+        print_warning("Nuitka not found. Falling back to PyInstaller...")
+
+    # Fallback to PyInstaller
+    if check_tool("PyInstaller"):
+        success = build_pyinstaller(entry_point, icon_path)
+        if success:
+            sys.exit(0)
+        else:
+            print_error("Both Nuitka and PyInstaller failed.")
+            sys.exit(1)
+    else:
+        print_error("PyInstaller not found either! Please install Nuitka or PyInstaller.")
+        print(f"Run: {Colors.OKCYAN}pip install nuitka zstandard{Colors.ENDC} OR {Colors.OKCYAN}pip install pyinstaller{Colors.ENDC}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     build()
