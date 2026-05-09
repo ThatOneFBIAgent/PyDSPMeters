@@ -434,6 +434,78 @@ THEME_GROUPS = {
                     "Transparent Crimson", "Transparent Aurora"],
 }
 
+INVALID_THEMES = {}
+
+def load_custom_themes():
+    import json
+    import os
+    import logging
+    from app.settings import SettingsManager
+
+    path = os.path.join(SettingsManager.get_app_data_dir(), "themes.json")
+    template = {
+        "My Custom Theme": {
+            "__comment": "Remove this comment and fill in valid hex codes to use this theme.",
+            "BG_DARKEST": "#000000",
+            "ACCENT": "#ffffff"
+        }
+    }
+    
+    if not os.path.exists(path):
+        try:
+            with open(path, "w") as f:
+                json.dump(template, f, indent=4)
+        except Exception as e:
+            logging.error(f"Failed to create themes.json: {e}")
+        return
+
+    try:
+        with open(path, "r") as f:
+            custom_themes = json.load(f)
+    except Exception as e:
+        logging.error(f"Failed to parse themes.json: {e}")
+        return
+        
+    if not isinstance(custom_themes, dict):
+        logging.error("themes.json must contain a dictionary of themes.")
+        return
+        
+    if "Custom" not in THEME_GROUPS:
+        THEME_GROUPS["Custom"] = []
+    else:
+        THEME_GROUPS["Custom"].clear()
+        
+    for name, theme_data in custom_themes.items():
+        if name == "My Custom Theme" and "__comment" in theme_data:
+            continue
+            
+        if not isinstance(theme_data, dict):
+            INVALID_THEMES[name] = "Theme data must be a dictionary of color values."
+            THEME_GROUPS["Custom"].append(f"{name} [!]")
+            continue
+            
+        invalid_keys = []
+        for k, v in theme_data.items():
+            if k == "__comment": continue
+            if k == "HEATMAP_STOPS":
+                if not isinstance(v, list):
+                    invalid_keys.append(k)
+            elif not isinstance(v, str) or not v.startswith("#"):
+                invalid_keys.append(k)
+                
+        if invalid_keys:
+            INVALID_THEMES[name] = f"Invalid color formats or missing '#' for keys: {', '.join(invalid_keys)}"
+            THEME_GROUPS["Custom"].append(f"{name} [!]")
+        else:
+            THEME_PRESETS[name] = theme_data
+            THEME_GROUPS["Custom"].append(name)
+            
+    # Clean up empty Custom group
+    if not THEME_GROUPS["Custom"]:
+        del THEME_GROUPS["Custom"]
+
+load_custom_themes()
+
 
 # ── Mutable Color Palette ───────────────────────────────────────────────────
 class Colors:

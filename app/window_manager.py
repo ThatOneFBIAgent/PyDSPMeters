@@ -633,7 +633,7 @@ class MainWindow(QMainWindow):
         for group_name, theme_names in THEME_GROUPS.items():
             group_sub = theme_menu.addMenu(group_name)
             for name in theme_names:
-                if name not in THEME_PRESETS:
+                if name not in THEME_PRESETS and not name.endswith(" [!]"):
                     continue
                 act = QAction(name, self)
                 act.setCheckable(True); act.setChecked(name == current)
@@ -720,6 +720,19 @@ class MainWindow(QMainWindow):
             m.set_move_mode(enabled)
 
     def _apply_theme(self, name: str):
+        if name.endswith(" [!]"):
+            from PySide6.QtWidgets import QMessageBox
+            from app.theme import INVALID_THEMES
+            real_name = name[:-4]
+            error_msg = INVALID_THEMES.get(real_name, "Unknown error")
+            box = QMessageBox(self)
+            box.setWindowTitle("Invalid Theme")
+            box.setText(f"The theme '{real_name}' has malformed data in themes.json:\n\n{error_msg}")
+            box.setIcon(QMessageBox.Warning)
+            box.setStyleSheet(f"QMessageBox {{ background-color: {Colors.BG_DARK}; color: {Colors.TEXT}; }} QPushButton {{ background: {Colors.BG_HEADER}; color: {Colors.ACCENT}; border: 1px solid {Colors.BORDER}; padding: 4px 12px; }}")
+            box.exec()
+            return
+
         apply_theme(name, self._settings.get("ui", {}).get("color_overrides", {}))
         app = QApplication.instance()
         if app:
