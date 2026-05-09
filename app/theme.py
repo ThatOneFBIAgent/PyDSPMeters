@@ -487,10 +487,20 @@ def load_custom_themes():
         invalid_keys = []
         for k, v in theme_data.items():
             if k == "__comment": continue
+            
             if k == "HEATMAP_STOPS":
+                # In JSON this is a list of lists: [[0.0, "#hex"], ...]
                 if not isinstance(v, list):
                     invalid_keys.append(k)
-            elif not isinstance(v, str) or not v.startswith("#"):
+                continue
+                
+            if k.endswith("_ALPHA"):
+                if not isinstance(v, (int, float)):
+                    invalid_keys.append(k)
+                continue
+
+            # Standard hex color check
+            if not isinstance(v, str) or not v.startswith("#"):
                 invalid_keys.append(k)
                 
         if invalid_keys:
