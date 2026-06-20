@@ -35,3 +35,15 @@ def test_load_corrupt_json(tmp_path, monkeypatch):
     
     loaded = SettingsManager.load()
     assert loaded == {}
+
+def test_save_and_load_profile_file(tmp_path):
+    profile_file = tmp_path / "profiles" / "stream.json"
+    settings = {
+        "window": {"width": 420, "height": 900},
+        "modules": [{"key": "vu_meter", "config": {"style": 2}}],
+    }
+
+    SettingsManager.save_to_file(profile_file, settings)
+
+    assert profile_file.exists()
+    assert SettingsManager.load_from_file(profile_file) == settings

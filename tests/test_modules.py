@@ -40,6 +40,22 @@ def test_loudness_module_processing():
     # LUFS should be around -3.0 dB for a full scale sine
     assert np.all(module._lufs_m > -5.0)
 
+def test_loudness_module_uses_combined_lufs_for_stereo_display():
+    engine = MockEngine()
+    module = LoudnessModule(engine)
+    module._reactivity = "Instant"
+    
+    t = np.arange(44100) / 44100.0
+    tone = np.sin(2 * np.pi * 1000 * t).astype(np.float32)
+    stereo = np.column_stack([tone, tone])
+    
+    module.on_audio_data(stereo)
+    
+    assert module._lufs_m_combined > module._lufs_m[0] + 2.5
+    vals, raw = module._meter_values(0, per_channel=False)
+    assert raw[0] == module._lufs_m_combined
+    assert vals[0] == module._disp_m_combined
+
 def test_loudness_module_settings_persistence():
     engine = MockEngine()
     module = LoudnessModule(engine)

@@ -46,7 +46,9 @@ def _short_unit(mode, avail_w):
 class LoudnessModule(BaseModule):
 
     def __init__(self, audio_engine, parent=None):
-        self._meter = LoudnessMeter(sample_rate=audio_engine.sample_rate, channels=2)
+        self._meter = LoudnessMeter(sample_rate=audio_engine.sample_rate, channels=audio_engine.channels)
+        self._meter_sample_rate = audio_engine.sample_rate
+        self._meter_channels = audio_engine.channels
         self._mode = "LUFS"
         self._orientation = "Auto"
         self.module_key = "loudness"
@@ -70,11 +72,19 @@ class LoudnessModule(BaseModule):
         self._rms_m = np.zeros(ch) - 120.0
         self._rms_st = np.zeros(ch) - 120.0
         self._peak = np.zeros(ch) - 120.0
+        self._lufs_m_combined = -120.0
+        self._lufs_st_combined = -120.0
+        self._rms_m_combined = -120.0
+        self._rms_st_combined = -120.0
+        self._peak_combined = -120.0
         
         self._disp_m = np.zeros(ch) - 60.0
         self._disp_st = np.zeros(ch) - 60.0
         self._disp_int = -60.0
         self._disp_peak = np.zeros(ch) - 60.0
+        self._disp_m_combined = -60.0
+        self._disp_st_combined = -60.0
+        self._disp_peak_combined = -60.0
         
         # Peak follower for floating badge
         self._peak_follow = -60.0
@@ -194,6 +204,7 @@ class LoudnessModule(BaseModule):
         self.header.set_title(f"Loudness · {mode}")
 
     def on_audio_data(self, data: np.ndarray):
+        self._ensure_meter_matches_engine()
         self._meter.process(data)
         
         # Get stereo values
@@ -203,18 +214,26 @@ class LoudnessModule(BaseModule):
         self._rms_m = self._meter.rms_momentary_channels
         self._rms_st = self._meter.rms_shortterm_channels
         self._peak = self._meter.true_peak_channels
+        self._lufs_m_combined = self._meter.lufs_momentary
+        self._lufs_st_combined = self._meter.lufs_shortterm
+        self._rms_m_combined = self._meter.rms_momentary
+        self._rms_st_combined = self._meter.rms_shortterm
+        self._peak_combined = self._meter.true_peak
         
         # Get alpha from reactivity preset
         alpha = REACTIVITY_PRESETS.get(self._reactivity, 0.4)
         
         if self._mode == "LUFS":
             m_target, st_target = self._lufs_m, self._lufs_st
+            m_combined, st_combined = self._lufs_m_combined, self._lufs_st_combined
             int_target = self._lufs_int
         elif self._mode == "RMS":
             m_target, st_target = self._rms_m, self._rms_st
+            m_combined, st_combined = self._rms_m_combined, self._rms_st_combined
             int_target = -120.0
         else:  # dBTP
             m_target, st_target = self._peak, self._peak
+            m_combined = st_combined = self._peak_combined
             int_target = -120.0
             
         # Apply smoothing directly - no rubber banding
@@ -222,10 +241,13 @@ class LoudnessModule(BaseModule):
         self._disp_st = self._disp_st * (1.0 - alpha) + st_target * alpha
         self._disp_int = self._disp_int * (1.0 - 0.1) + int_target * 0.1 # Slow smooth for Integrated
         self._disp_peak = self._disp_peak * (1.0 - 0.3) + self._peak * 0.3
+        self._disp_m_combined = self._disp_m_combined * (1.0 - alpha) + m_combined * alpha
+        self._disp_st_combined = self._disp_st_combined * (1.0 - alpha) + st_combined * alpha
+        self._disp_peak_combined = self._disp_peak_combined * (1.0 - 0.3) + self._peak_combined * 0.3
         
         # Inverse-log peak follower (mono average)
         db_floor = self._mode_scale()[0]
-        current_val = float(np.mean(m_target))
+        current_val = float(m_combined)
         if current_val > self._peak_follow:
             self._peak_follow = current_val
         else:
@@ -235,18 +257,33 @@ class LoudnessModule(BaseModule):
             self._peak_follow -= decay_rate
             self._peak_follow = max(db_floor, self._peak_follow)
 
+    def _ensure_meter_matches_engine(self):
+        if (self._meter_sample_rate != self.audio_engine.sample_rate or
+                self._meter_channels != self.audio_engine.channels):
+            self.on_channels_changed()
+
     def on_channels_changed(self):
         """Reset buffers and meter when channel count changes."""
         ch = self.audio_engine.channels
         self._meter = LoudnessMeter(sample_rate=self.audio_engine.sample_rate, channels=ch)
+        self._meter_sample_rate = self.audio_engine.sample_rate
+        self._meter_channels = ch
         self._lufs_m = np.zeros(ch) - 120.0
         self._lufs_st = np.zeros(ch) - 120.0
         self._rms_m = np.zeros(ch) - 120.0
         self._rms_st = np.zeros(ch) - 120.0
         self._peak = np.zeros(ch) - 120.0
+        self._lufs_m_combined = -120.0
+        self._lufs_st_combined = -120.0
+        self._rms_m_combined = -120.0
+        self._rms_st_combined = -120.0
+        self._peak_combined = -120.0
         self._disp_m = np.zeros(ch) - 60.0
         self._disp_st = np.zeros(ch) - 60.0
         self._disp_peak = np.zeros(ch) - 60.0
+        self._disp_m_combined = -60.0
+        self._disp_st_combined = -60.0
+        self._disp_peak_combined = -60.0
 
     def get_settings(self):
         return {
@@ -319,6 +356,23 @@ class LoudnessModule(BaseModule):
                 int(c_mid.green() + (c_high.green() - c_mid.green()) * f),
                 int(c_mid.blue() + (c_high.blue() - c_mid.blue()) * f)
             )
+
+    def _meter_values(self, meter_idx, per_channel):
+        if meter_idx == 0:
+            if self._mode == "LUFS":
+                return (self._disp_m, self._lufs_m) if per_channel else (np.array([self._disp_m_combined]), np.array([self._lufs_m_combined]))
+            if self._mode == "RMS":
+                return (self._disp_m, self._rms_m) if per_channel else (np.array([self._disp_m_combined]), np.array([self._rms_m_combined]))
+            return (self._disp_m, self._peak) if per_channel else (np.array([self._disp_m_combined]), np.array([self._peak_combined]))
+        if meter_idx == 1:
+            if self._mode == "LUFS":
+                return (self._disp_st, self._lufs_st) if per_channel else (np.array([self._disp_st_combined]), np.array([self._lufs_st_combined]))
+            if self._mode == "RMS":
+                return (self._disp_st, self._rms_st) if per_channel else (np.array([self._disp_st_combined]), np.array([self._rms_st_combined]))
+            return (self._disp_st, self._peak) if per_channel else (np.array([self._disp_st_combined]), np.array([self._peak_combined]))
+        if meter_idx == 3:
+            return np.array([self._disp_int]), np.array([self._lufs_int])
+        return (self._disp_peak, self._peak) if per_channel else (np.array([self._disp_peak_combined]), np.array([self._peak_combined]))
 
     def _render(self, painter, w, h):
         is_vertical = self._orientation == "Vertical"
@@ -403,11 +457,6 @@ class LoudnessModule(BaseModule):
                 painter.setFont(self.get_responsive_font(Fonts.small, bar_w, lbl_h, labels[meter_idx]))
                 self.draw_text_badge(painter, QRectF(gx, m, bar_w, lbl_h), Qt.AlignCenter, labels[meter_idx], QColor(Colors.TEXT_DIM))
 
-            if meter_idx == 0:   vals, raw = self._disp_m, (self._lufs_m if self._mode == "LUFS" else (self._rms_m if self._mode == "RMS" else self._peak))
-            elif meter_idx == 1: vals, raw = self._disp_st, (self._lufs_st if self._mode == "LUFS" else (self._rms_st if self._mode == "RMS" else self._peak))
-            elif meter_idx == 3: vals, raw = np.array([self._disp_int]), np.array([self._lufs_int])
-            else:                vals, raw = self._disp_peak, self._peak
-
             grad = QLinearGradient(0, bar_y + bar_h, 0, bar_y)
             grad.setColorAt(0.0, QColor(Colors.METER_LOW))
             grad.setColorAt(0.7, QColor(Colors.METER_LOW))
@@ -416,8 +465,10 @@ class LoudnessModule(BaseModule):
 
             # Integrated bar is always mono (averaged)
             force_mono = (meter_idx == 3)
+            use_channels = self._show_all_channels and not force_mono
+            vals, raw = self._meter_values(meter_idx, use_channels)
 
-            if self._show_all_channels and not force_mono:
+            if use_channels:
                 ch_count = self.audio_engine.channels
                 bw = (bar_w - (ch_count-1)*2) / ch_count
                 for ch in range(ch_count):
@@ -564,12 +615,9 @@ class LoudnessModule(BaseModule):
                 self.draw_text_badge(painter, QRectF(m + mode_w, ry, lbl_w, row_h), Qt.AlignVCenter | Qt.AlignRight, labels[meter_idx], QColor(Colors.TEXT_DIM))
             
             # Get values
-            if meter_idx == 0:   vals, raw = self._disp_m, (self._lufs_m if self._mode == "LUFS" else (self._rms_m if self._mode == "RMS" else self._peak))
-            elif meter_idx == 1: vals, raw = self._disp_st, (self._lufs_st if self._mode == "LUFS" else (self._rms_st if self._mode == "RMS" else self._peak))
-            elif meter_idx == 3: vals, raw = np.array([self._disp_int]), np.array([self._lufs_int])
-            else:                vals, raw = self._disp_peak, self._peak
-            
             force_mono = (meter_idx == 3)
+            use_channels = self._show_all_channels and not force_mono
+            vals, raw = self._meter_values(meter_idx, use_channels)
             
             # Create Horizontal Gradient
             grad = QLinearGradient(bar_x, 0, bar_x + bar_w, 0)
@@ -579,7 +627,7 @@ class LoudnessModule(BaseModule):
             grad.setColorAt(1.0, QColor(Colors.METER_HIGH))
 
             # Bars
-            if self._show_all_channels and not force_mono:
+            if use_channels:
                 ch_count = self.audio_engine.channels
                 bh = (row_h - (ch_count-1)*2) / ch_count
                 for ch in range(ch_count):

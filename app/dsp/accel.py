@@ -287,3 +287,30 @@ def compute_fft(data, window, fft_size):
     magnitude = magnitude / (fft_size / 4)
     magnitude = np.clip(magnitude, 1e-10, None)
     return 20.0 * np.log10(magnitude)
+
+
+_TILT_CACHE = {}
+
+def apply_tilt(magnitude_db, freqs, tilt_db, pivot_hz=1000.0):
+    """Apply dB/octave spectral tilt around a pivot frequency."""
+    if abs(tilt_db) < 0.01:
+        return magnitude_db
+
+    if _HAS_NATIVE and hasattr(_native, "apply_tilt"):
+        return _native.apply_tilt(
+            magnitude_db.astype(np.float32),
+            freqs.astype(np.float32),
+            float(tilt_db),
+            float(pivot_hz),
+        )
+
+    freq_step = float(freqs[1] - freqs[0]) if len(freqs) > 1 else 0.0
+    cache_key = (len(freqs), float(tilt_db), float(pivot_hz), freq_step)
+    if cache_key in _TILT_CACHE:
+        tilt_curve = _TILT_CACHE[cache_key]
+    else:
+        safe_freqs = np.clip(freqs, 20.0, None)
+        tilt_curve = np.log2(safe_freqs / max(pivot_hz, 1.0)) * tilt_db
+        _TILT_CACHE[cache_key] = tilt_curve
+
+    return magnitude_db + tilt_curve

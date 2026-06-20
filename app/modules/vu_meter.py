@@ -4,7 +4,7 @@ Classic VU Meter Module: Analog-style needle meter with ballistics.
 
 import math
 import numpy as np
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QLinearGradient
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QLinearGradient, QFont
 from PySide6.QtCore import Qt, QPointF, QRectF
 
 from app.base_module import BaseModule
@@ -62,7 +62,7 @@ class VUMeterModule(BaseModule):
         
         sm = menu.addMenu("Style")
         sg = QActionGroup(self)
-        for i, s in enumerate(["Modern", "Classic Dark", "LED Bar"]):
+        for i, s in enumerate(["Modern", "Classic Dark", "LED Bar", "Compaq Modern", "Compaq Vintage"]):
             a = sm.addAction(s)
             a.setCheckable(True)
             a.setChecked(i == self._style)
@@ -154,6 +154,9 @@ class VUMeterModule(BaseModule):
     def _render(self, painter, w, h):
         if self._style == 2:
             self._render_led_bar(painter, w, h)
+            return
+        if self._style in (3, 4):
+            self._render_compaq(painter, w, h, vintage=self._style == 4)
             return
             
         style = self._style
@@ -316,6 +319,154 @@ class VUMeterModule(BaseModule):
                 painter.setFont(self.get_responsive_font(Fonts.small, 40, 12, "CLIP"))
                 painter.drawText(QRectF(w - 58, 6, 40, 12), Qt.AlignRight, "CLIP")
 
+    def _render_compaq(self, painter, w, h, vintage=False):
+        is_stereo = (self._channel == "L+R")
+        if w < 36 or h < 36:
+            return
+
+        side = min(w, h)
+        ox = (w - side) * 0.5
+        oy = (h - side) * 0.5
+        outer = QRectF(ox + 2, oy + 2, side - 4, side - 4)
+        inset = max(5.0, side * 0.075)
+        face = outer.adjusted(inset, inset, -inset, -inset)
+
+        if vintage:
+            bezel = QColor("#151515")
+            bezel_hi = QColor("#303030")
+            face_col = QColor("#efefe7")
+            face_shadow = QColor("#d8d8cf")
+            tick_col = QColor("#151515")
+            text_col = QColor("#202020")
+            dim_col = QColor("#6d6d60")
+            red_col = QColor("#b03024")
+            needle_cols = [QColor("#101010"), QColor("#555555")]
+            block_col = QColor("#e4e4dc")
+            knob_col = QColor("#161616")
+        else:
+            bezel = QColor(Colors.BG_DARKEST)
+            bezel_hi = QColor(Colors.BORDER)
+            face_col = QColor(Colors.BG_MODULE)
+            face_shadow = QColor(Colors.BG_INPUT)
+            tick_col = QColor(Colors.TEXT_DIM)
+            text_col = QColor(Colors.TEXT)
+            dim_col = QColor(Colors.TEXT_DIM)
+            red_col = QColor(Colors.METER_HIGH)
+            needle_cols = [QColor(Colors.ACCENT), QColor(Colors.ACCENT_PINK)]
+            block_col = QColor(Colors.BG_HEADER)
+            knob_col = QColor(Colors.ACCENT)
+
+        painter.save()
+        painter.setPen(QPen(bezel_hi, 1))
+        painter.setBrush(QBrush(bezel))
+        painter.drawRoundedRect(outer, 4, 4)
+
+        painter.setPen(QPen(face_shadow, 1))
+        painter.setBrush(QBrush(face_col))
+        painter.drawRoundedRect(face, 5, 5)
+
+        def compaq_font(size, bold=False):
+            f = QFont("Arial", max(5, int(size * Fonts.TEXT_SCALE)))
+            f.setBold(bold)
+            return f
+
+        block_w = face.width() * 0.36
+        block_h = face.height() * 0.30
+        block = QRectF(face.right() - block_w - 2, face.bottom() - block_h - 2, block_w, block_h)
+        knob = QPointF(block.center().x() + block_w * 0.22, block.center().y() + block_h * 0.12)
+
+        cx = knob.x()
+        cy = knob.y()
+        radius = max(10.0, min((cx - face.left()) * 0.92, (cy - face.top()) * 0.88))
+        angle_start, angle_end = 176.0, 96.0
+
+        def point_at(frac, r):
+            angle = math.radians(angle_start - frac * (angle_start - angle_end))
+            return QPointF(cx + r * math.cos(angle), cy - r * math.sin(angle))
+
+        tick_count = 26 if side >= 120 else 18
+        for i in range(tick_count + 1):
+            frac = i / tick_count
+            is_major = i % max(1, tick_count // 4) == 0
+            is_mid = i % max(1, tick_count // 8) == 0
+            inner = radius * (0.76 if is_major else 0.84 if is_mid else 0.89)
+            outer_r = radius * 0.96
+            col = red_col if frac >= 0.82 else tick_col
+            painter.setPen(QPen(col, 1.4 if is_major else 0.9))
+            painter.drawLine(point_at(frac, inner), point_at(frac, outer_r))
+
+        if side < 82:
+            label_items = []
+        elif side < 115:
+            label_items = [(0.60, "100")]
+        elif side < 145:
+            label_items = [(0.30, "50"), (0.60, "100")]
+        else:
+            label_items = [(0.30, "50"), (0.60, "100"), (0.90, "150")]
+        label_w = max(16, min(30, face.width() * 0.19))
+        label_h = max(9, min(15, face.height() * 0.11))
+        label_r = radius * (0.68 if side >= 120 else 0.60)
+        for frac, label in label_items:
+            pos = point_at(frac, label_r)
+            painter.setFont(compaq_font(label_h * 0.75, True))
+            painter.setPen(text_col)
+            painter.drawText(QRectF(pos.x() - label_w / 2, pos.y() - label_h / 2, label_w, label_h), Qt.AlignCenter, label)
+
+        painter.setFont(compaq_font(min(18, max(8, face.height() * 0.17)), False))
+        painter.setPen(text_col)
+        painter.drawText(QRectF(face.left() + 8, face.top() + 8, face.width() * 0.22, 20), Qt.AlignLeft, "A")
+
+        if side >= 105:
+            brand = "PYDSP"
+            painter.setFont(compaq_font(min(7, max(5, face.height() * 0.055)), True))
+            painter.setPen(dim_col)
+            painter.drawText(QRectF(face.center().x() - face.width() * 0.08, face.center().y() - 4, face.width() * 0.26, 10), Qt.AlignCenter, brand)
+
+        vals = [self._needle_l, self._needle_r] if is_stereo else [self._needle_l]
+        for idx, val in enumerate(vals):
+            frac = max(0.0, min(1.0, (val + 20.0) / 23.0))
+            end = point_at(frac, radius * 0.74)
+            col = QColor(needle_cols[idx % len(needle_cols)])
+            if is_stereo and idx == 1:
+                col.setAlpha(180)
+            painter.setPen(QPen(col, 2.2 if idx == 0 else 1.5))
+            y_off = idx * max(1.0, side * 0.009) if is_stereo else 0.0
+            painter.drawLine(QPointF(cx, cy + y_off), QPointF(end.x(), end.y() + y_off))
+
+        painter.setPen(QPen(face_shadow, 1))
+        painter.setBrush(QBrush(block_col))
+        painter.drawRoundedRect(block, 5, 5)
+        painter.setBrush(QBrush(knob_col))
+        painter.setPen(QPen(bezel_hi, 1))
+        painter.drawEllipse(knob, max(4, side * 0.034), max(4, side * 0.034))
+
+        if self._show_peak or self._show_clip:
+            led_r = max(2.0, min(4.0, side * 0.022))
+            led_x = block.left() + max(5, block.width() * 0.18)
+            led_y = block.bottom() - max(6, block.height() * 0.24)
+            label_x = led_x + led_r * 2 + 3
+            show_led_labels = side >= 115 and block.width() > 42
+            painter.setFont(compaq_font(6, False))
+            if self._show_peak:
+                lit = self._peak_lit_l or self._peak_lit_r
+                painter.setBrush(QColor(Colors.PEAK_LED) if lit else QColor(Colors.BG_INPUT))
+                painter.setPen(QPen(face_shadow, 1))
+                painter.drawEllipse(QPointF(led_x, led_y), led_r, led_r)
+                if show_led_labels:
+                    painter.setPen(dim_col)
+                    painter.drawText(QRectF(label_x, led_y - 5, 20, 10), Qt.AlignLeft | Qt.AlignVCenter, "PK")
+                led_y -= led_r * 2 + 4
+            if self._show_clip:
+                lit = self._clip_lit_l or self._clip_lit_r
+                painter.setBrush(QColor(Colors.CLIP_LED) if lit else QColor(Colors.BG_INPUT))
+                painter.setPen(QPen(face_shadow, 1))
+                painter.drawEllipse(QPointF(led_x, led_y), led_r, led_r)
+                if show_led_labels:
+                    painter.setPen(dim_col)
+                    painter.drawText(QRectF(label_x, led_y - 5, 24, 10), Qt.AlignLeft | Qt.AlignVCenter, "CLP")
+
+        painter.restore()
+
     def _render_led_bar(self, painter, w, h):
         """LED Bar style: Segmented horizontal/vertical bar meter with peak hold."""
         is_stereo = (self._channel == "L+R")
@@ -323,6 +474,11 @@ class VUMeterModule(BaseModule):
         pad = 6
         bar_area_x = pad
         bar_area_w = w - pad * 2
+        show_status = h > 34 and (self._show_peak or self._show_clip)
+        scale_h = 12
+        status_h = 12 if show_status else 0
+        status_gap = 2 if show_status else 0
+        bottom_reserved = scale_h + status_gap + status_h
         
         # dB range: -40 to +3
         db_min, db_max = -40.0, 3.0
@@ -341,7 +497,7 @@ class VUMeterModule(BaseModule):
         
         if is_stereo:
             # Two bars stacked
-            bar_h = max(6, (h - pad * 3 - 16) / 2)  # 16px for scale
+            bar_h = max(4, (h - pad * 3 - bottom_reserved) / 2)
             bar_y_l = pad
             bar_y_r = pad + bar_h + pad
             scale_y = bar_y_r + bar_h + 2
@@ -360,7 +516,7 @@ class VUMeterModule(BaseModule):
             painter.drawText(QRectF(bar_area_x - 2, bar_y_r, 14, bar_h), Qt.AlignVCenter | Qt.AlignLeft, "R")
         else:
             # Single centered bar
-            bar_h = max(8, (h - pad * 2 - 16) / 1)
+            bar_h = max(6, h - pad * 2 - bottom_reserved)
             bar_y = pad
             scale_y = bar_y + bar_h + 2
             
@@ -383,11 +539,12 @@ class VUMeterModule(BaseModule):
             
             painter.setPen(QColor(Colors.RED) if db >= 0 else QColor(Colors.TEXT_DIM))
             painter.setFont(self.get_responsive_font(Fonts.small, 28, 12, lbl))
-            painter.drawText(QRectF(tx - 14, scale_y, 28, 12), Qt.AlignCenter, lbl)
+            if scale_y + scale_h <= h - status_h - status_gap:
+                painter.drawText(QRectF(tx - 14, scale_y, 28, scale_h), Qt.AlignCenter, lbl)
         
         # PEAK / CLIP LEDs
-        if h > 30:
-            led_y = h - 14
+        if show_status:
+            led_y = h - pad - 6
             painter.setFont(Fonts.small())
             if self._show_peak:
                 lit = self._peak_lit_l or self._peak_lit_r
@@ -397,6 +554,7 @@ class VUMeterModule(BaseModule):
                 painter.drawRoundedRect(QRectF(bar_area_x, led_y, 6, 6), 1, 1)
                 if w > 85:
                     painter.setPen(QColor(Colors.TEXT_DIM))
+                    painter.setFont(self.get_responsive_font(Fonts.small, 30, 10, "PK"))
                     painter.drawText(QRectF(bar_area_x + 9, led_y - 2, 30, 10), Qt.AlignLeft, "PK")
                     
             if self._show_clip:

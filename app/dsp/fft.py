@@ -127,26 +127,10 @@ def hz_to_note_name(hz: float) -> str:
     return f"{note}{octave} {sign}{cents}c"
 
 
-_TILT_CACHE = {}
-
 def apply_tilt(magnitude_db: np.ndarray, freqs: np.ndarray,
-               tilt_db: float) -> np.ndarray:
+               tilt_db: float, pivot_hz: float = 1000.0) -> np.ndarray:
     """
-    Apply a spectral tilt. Positive tilts boost highs, negative boosts lows.
-    Uses cached curves for performance.
+    Apply a spectral tilt in dB/octave around a pivot frequency.
+    Positive tilts boost highs, negative tilts boost lows.
     """
-    if abs(tilt_db) < 0.01:
-        return magnitude_db
-        
-    cache_key = (len(freqs), float(tilt_db), float(freqs[1]-freqs[0]))
-    if cache_key in _TILT_CACHE:
-        tilt_curve = _TILT_CACHE[cache_key]
-    else:
-        log_freqs = np.log10(np.clip(freqs, 20.0, None))
-        log_min = np.log10(20.0)
-        log_max = np.log10(20000.0)
-        norm = (log_freqs - log_min) / (log_max - log_min)  # 0..1
-        tilt_curve = (norm - 0.5) * tilt_db
-        _TILT_CACHE[cache_key] = tilt_curve
-        
-    return magnitude_db + tilt_curve
+    return accel.apply_tilt(magnitude_db, freqs, tilt_db, pivot_hz)

@@ -63,6 +63,7 @@ venv.bak/
 # IDE / Editor folders
 .vscode/
 .idea/
+.agents
 *.swp
 *.swo
 

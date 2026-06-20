@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from app.dsp.fft import (
     compute_fft, fft_frequencies, map_frequencies_to_pixels,
-    detect_peak_frequency, hz_to_note_name, hz_to_mel,
+    detect_peak_frequency, hz_to_note_name, hz_to_mel, apply_tilt,
 )
 from app.dsp.loudness import LoudnessMeter
 from app.dsp.correlation import correlation, multiband_correlation, stereo_to_mid_side
@@ -56,6 +56,12 @@ class TestFFT:
         freqs = np.array([100.0, 1000.0, 10000.0])
         px = map_frequencies_to_pixels(freqs, 1000, "logarithmic")
         assert px[0] < px[1] < px[2]
+
+    def test_tilt_is_db_per_octave(self):
+        freqs = np.array([500.0, 1000.0, 2000.0])
+        mag = np.zeros(3)
+        tilted = apply_tilt(mag, freqs, 6.0, pivot_hz=1000.0)
+        np.testing.assert_allclose(tilted, [-6.0, 0.0, 6.0], atol=0.01)
 
 
 # ── Loudness Tests ──────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QSizePolicy, QComboBox, QSlider, QCheckBox,
 )
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QTimer
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QTimer, QElapsedTimer
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QIcon, QFontMetrics
 
 from app.theme import Colors, Fonts
@@ -76,16 +76,20 @@ class RenderCanvas(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
         self._render_func = None
+        self._antialiasing = True
 
     def set_render_func(self, func):
         """Set external render callback: func(painter, width, height)."""
         self._render_func = func
 
+    def set_antialiasing(self, enabled: bool):
+        self._antialiasing = bool(enabled)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         if not painter.isActive():
             return
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.Antialiasing, self._antialiasing)
         
         painter.fillRect(self.rect(), QColor(Colors.BG_MODULE))
         w, h = self.width(), self.height()
@@ -209,13 +213,11 @@ class BaseModule(QWidget):
         layout.addWidget(self.canvas)
 
         self.update_theme()
-        self.audio_engine.data_ready.connect(self.on_audio_data)
-
-        from PySide6.QtCore import QTimer
-        self._refresh_timer = QTimer(self)
-        self._refresh_timer.setInterval(16)
-        self._refresh_timer.timeout.connect(self.canvas.update)
-        self._refresh_timer.start()
+        self.audio_engine.data_ready.connect(self._handle_audio_data)
+        self._render_interval_ms = 16
+        self._render_pending = False
+        self._last_render_update = QElapsedTimer()
+        self._last_render_update.start()
 
     def update_theme(self):
         self.setStyleSheet(f"#baseModule {{ background: {Colors.BG_DARK}; border: 1px solid {Colors.BORDER}; border-radius: 4px; }}")
@@ -382,6 +384,24 @@ class BaseModule(QWidget):
         """
         pass
 
+    def _handle_audio_data(self, data: np.ndarray):
+        self.on_audio_data(data)
+        elapsed = self._last_render_update.elapsed()
+        if elapsed >= self._render_interval_ms:
+            self._flush_render_update()
+        elif not self._render_pending:
+            self._render_pending = True
+            QTimer.singleShot(max(1, self._render_interval_ms - elapsed), self._flush_render_update)
+
+    def _flush_render_update(self):
+        self._render_pending = False
+        try:
+            if self.canvas and self.canvas.isVisible():
+                self.canvas.update()
+                self._last_render_update.restart()
+        except RuntimeError:
+            pass
+
     def get_settings(self) -> dict:
         """Override to return a dict of settings to persist."""
         return {}
@@ -392,9 +412,8 @@ class BaseModule(QWidget):
 
     def cleanup(self):
         """Called when the module is being removed."""
-        self._refresh_timer.stop()
         try:
-            self.audio_engine.data_ready.disconnect(self.on_audio_data)
+            self.audio_engine.data_ready.disconnect(self._handle_audio_data)
         except RuntimeError:
             pass
         except Exception:

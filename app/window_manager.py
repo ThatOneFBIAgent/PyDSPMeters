@@ -675,8 +675,142 @@ class MainWindow(QMainWindow):
         # 4. Unified Divider Settings
         add_slider_setting(menu, "Divider Width:", 0, 12, getattr(self, "_divider_width", self.splitter.handleWidth()), self._set_divider_width, step=0.5)
         add_slider_setting(menu, "Divider Opacity:", 0, 100, self._settings.get("window", {}).get("divider_opacity", 100), self._set_divider_opacity)
+
+        menu.addSeparator()
+        profile_menu = menu.addMenu("Settings Profiles")
+        export_act = profile_menu.addAction("Save Profile as JSON...")
+        export_act.triggered.connect(self._export_profile)
+        import_act = profile_menu.addAction("Load Profile from JSON...")
+        import_act.triggered.connect(self._import_profile)
         
         menu.exec(QCursor.pos())
+
+    def _export_profile(self):
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Settings Profile",
+            "pydspmeters-profile.json",
+            "JSON Files (*.json)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".json"):
+            path += ".json"
+
+        if not SettingsManager.save_to_file(path, self._gather_settings()):
+            QMessageBox.warning(self, "Profile Save Failed", "Could not save profile. Check the selected folder permissions.")
+
+    def _import_profile(self):
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Settings Profile",
+            "",
+            "JSON Files (*.json)",
+        )
+        if not path:
+            return
+
+        settings = SettingsManager.load_from_file(path)
+        if not isinstance(settings, dict) or not settings:
+            QMessageBox.warning(self, "Profile Load Failed", "That file does not look like a PyDSPMeters settings profile.")
+            return
+
+        try:
+            self._apply_profile_settings(settings)
+            SettingsManager.save(self._gather_settings())
+        except Exception as e:
+            QMessageBox.warning(self, "Profile Load Failed", f"Could not apply profile:\n{e}")
+
+    def _apply_profile_settings(self, settings: dict):
+        if getattr(self, "_move_mode_active", False):
+            self._toggle_move_mode(False)
+
+        if getattr(self, "_appbar_active", False):
+            self._appbar_active = False
+            self._release_appbar()
+
+        self._settings = settings
+        win_s = settings.get("window", {})
+        ui_s = settings.get("ui", {})
+        audio_s = settings.get("audio", {})
+
+        self._show_headers = win_s.get("show_headers", True)
+        self._auto_hide_ui = win_s.get("auto_hide_ui", False)
+        self._appbar_edge = win_s.get("appbar_edge", "right")
+        self._appbar_saved = win_s.get("appbar_active", False)
+        self._appbar_active = False
+
+        if "width" in win_s and "height" in win_s:
+            self.resize(win_s["width"], win_s["height"])
+        if "x" in win_s and "y" in win_s:
+            self.move(win_s["x"], win_s["y"])
+
+        self._layout_vertical = win_s.get("vertical_layout", True)
+        self.splitter.setOrientation(Qt.Vertical if self._layout_vertical else Qt.Horizontal)
+        self.title_bar.layout_btn.setText("â–¥" if self._layout_vertical else "â–¤")
+
+        Fonts.TEXT_SCALE = ui_s.get("text_scale", 1.0)
+        apply_theme(ui_s.get("theme", "Midnight"), ui_s.get("color_overrides", {}))
+        app = QApplication.instance()
+        if app:
+            app.setStyleSheet(build_stylesheet())
+
+        self.audio_engine.gain_multiplier = audio_s.get("gain", 1.0)
+        self.audio_engine.channels = audio_s.get("channels", 2)
+        self._target_device_id = audio_s.get("device_full_id")
+        self._current_device = audio_s.get("device_index")
+
+        self._loading_settings = True
+        for module in list(self._modules):
+            self.remove_module(module)
+
+        module_items = settings.get("modules") or ["spectrum", "stereometer", "loudness"]
+        for item in module_items:
+            m_key = item if isinstance(item, str) else item.get("key")
+            m_config = {} if isinstance(item, str) else item.get("config", {})
+            self.add_module(m_key, m_config)
+        self._loading_settings = False
+
+        for module in self._modules:
+            module.header.setVisible(self._show_headers)
+            if hasattr(module, "on_theme_changed"):
+                module.on_theme_changed()
+            module.update_theme()
+            module.canvas.update()
+
+        self._refresh_devices()
+        best_index = None
+        if self._target_device_id:
+            for d in self._devices:
+                if d["full_id"] == self._target_device_id:
+                    best_index = d["index"]
+                    break
+        if best_index is None and self._current_device is not None:
+            if any(d["index"] == self._current_device for d in self._devices):
+                best_index = self._current_device
+        self._current_device = best_index
+        self.audio_engine.start(best_index, self.audio_engine.channels)
+
+        self._divider_width = win_s.get("divider_width", 4)
+        self.splitter.setHandleWidth(int(math.ceil(self._divider_width)))
+        self._set_divider_opacity(win_s.get("divider_opacity", 100))
+
+        saved_sizes = settings.get("splitter_sizes", [])
+        if saved_sizes and len(saved_sizes) == self.splitter.count():
+            self.splitter.setSizes(saved_sizes)
+        elif self.splitter.count() > 0:
+            total = self.splitter.height() if self._layout_vertical else self.splitter.width()
+            self.splitter.setSizes([max(1, total // self.splitter.count())] * self.splitter.count())
+
+        self._update_ui_styles()
+        self._update_ghost_mode()
+        self._update_appbar_ui()
+        if self._appbar_saved:
+            self._toggle_appbar(True, delay=100)
 
     def _toggle_headers(self, show: bool):
         self._show_headers = show

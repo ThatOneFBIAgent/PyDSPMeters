@@ -27,6 +27,7 @@ class StereometerModule(BaseModule):
         self._halved_view = False
         self._minimal_mode = False
         self._corr_pos = "Bottom"
+        self._rotation = 0
         
         self._width_gain = 1.0 
         self._persistence = 0.5 
@@ -59,13 +60,14 @@ class StereometerModule(BaseModule):
             "show_labels": self._show_labels,
             "minimal_mode": self._minimal_mode,
             "halved_view": self._halved_view,
-            "corr_pos": self._corr_pos
+            "corr_pos": self._corr_pos,
+            "rotation": self._rotation
         }
 
     _VALID_DISPLAY_MODES = {"Vectorscope", "Lissajous"}
     _VALID_COLOR_MODES = {"Static", "Multi-Band", "Multi-Band (RGB)"}
     _VALID_CORR_MODES = {"Single-Band", "Multi-Band"}
-    _VALID_GUIDE_MODES = {"None", "Rhombus", "Circle"}
+    _VALID_GUIDE_MODES = {"None", "Rhombus", "Circle", "Square"}
 
     def apply_settings(self, settings):
         dm = settings.get("display_mode", self._display_mode)
@@ -84,6 +86,7 @@ class StereometerModule(BaseModule):
         self._minimal_mode = bool(settings.get("minimal_mode", self._minimal_mode))
         self._halved_view = bool(settings.get("halved_view", self._halved_view))
         self._corr_pos = str(settings.get("corr_pos", self._corr_pos))
+        self._rotation = int(settings.get("rotation", self._rotation))
 
     def build_context_menu(self, menu):
         from PySide6.QtGui import QActionGroup
@@ -99,16 +102,28 @@ class StereometerModule(BaseModule):
 
         gm = menu.addMenu("Guide Map")
         gg = QActionGroup(self)
-        for g in ["None", "Rhombus", "Circle"]:
+        for g in ["None", "Rhombus", "Circle", "Square"]:
             a = gm.addAction(g)
             a.setCheckable(True)
             a.setChecked(g == self._guide_mode)
             a.triggered.connect(lambda checked, t=g: setattr(self, "_guide_mode", t))
             gg.addAction(a)
 
+        rm = menu.addMenu("Rotation")
+        rg = QActionGroup(self)
+        for r in range(-180, 181, 45):
+            label = f"{r}°" if r == 0 else (f"+{r}°" if r > 0 else f"{r}°")
+            a = rm.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(r == self._rotation)
+            a.triggered.connect(lambda checked, v=r: (setattr(self, "_rotation", v), self.canvas.update()))
+            rg.addAction(a)
+            
+        rm.setEnabled(not self._halved_view)
+
         zm = menu.addMenu("Zoom")
         zg = QActionGroup(self)
-        for z in [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0]:
+        for z in [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0]:
             a = zm.addAction(f"{z}x")
             a.setCheckable(True)
             a.setChecked(abs(z - self._zoom) < 0.01)
@@ -270,6 +285,13 @@ class StereometerModule(BaseModule):
             cy = sy_off + sh / 2
             radius = min(sw / 2 - margin, sh / 2 - margin)
 
+        # Rotation / Transformation block
+        painter.save()
+        if self._rotation != 0 and not self._halved_view:
+            painter.translate(cx, cy)
+            painter.rotate(self._rotation)
+            painter.translate(-cx, -cy)
+
         # 1. Base Grid / Crosshair
         painter.setPen(QPen(QColor(Colors.GRID), 0.5))
         painter.drawLine(int(cx), int(cy - radius), int(cx), int(cy + radius))
@@ -288,6 +310,11 @@ class StereometerModule(BaseModule):
                 painter.drawLine(int(cx-radius), int(cy), int(cx+radius), int(cy))
             else:
                 painter.drawEllipse(QPointF(cx, cy), radius, radius)
+        elif self._guide_mode == "Square":
+            if self._halved_view:
+                painter.drawPolyline([QPointF(cx-radius, cy), QPointF(cx-radius, cy-radius), QPointF(cx+radius, cy-radius), QPointF(cx+radius, cy)])
+            else:
+                painter.drawRect(QRectF(cx - radius, cy - radius, radius * 2, radius * 2))
 
         # 3. Trace (Drawn directly, no persistence)
         left, right = self._left, self._right
@@ -301,38 +328,39 @@ class StereometerModule(BaseModule):
             col = QColor(Colors.ACCENT)
             self._draw_trace(painter, left, right, cx, cy, radius, col, 200)
 
+        painter.restore()
+
         # Labels
         if self._show_labels:
-            painter.setFont(Fonts.small())
             painter.setPen(QColor(Colors.TEXT_DIM))
-            if self._halved_view:
-                if self._display_mode == "Vectorscope":
-                    painter.setFont(self.get_responsive_font(Fonts.small, 12, 12, "M"))
-                    painter.drawText(QRectF(cx - 6, sy_off + 2, 12, 12), Qt.AlignCenter, "M")
-                    painter.setFont(self.get_responsive_font(Fonts.small, 12, 12, "S"))
-                    painter.drawText(QRectF(cx - radius - 14, cy - 14, 12, 12), Qt.AlignCenter, "S")
-                    painter.drawText(QRectF(cx + radius + 2, cy - 14, 12, 12), Qt.AlignCenter, "S")
-                else:
-                    painter.setFont(self.get_responsive_font(Fonts.small, 12, 12, "L"))
-                    painter.drawText(QRectF(cx - radius - 14, cy - 14, 12, 12), Qt.AlignCenter, "L")
-                    painter.setFont(self.get_responsive_font(Fonts.small, 12, 12, "R"))
-                    painter.drawText(QRectF(cx + radius + 2, cy - 14, 12, 12), Qt.AlignCenter, "R")
+            
+            def draw_rot_text(text, base_angle, dist_offset=12):
+                rot = self._rotation if not self._halved_view else 0
+                angle_rad = np.radians(base_angle + rot)
+                # Calculate position on the circle
+                lx = cx + np.cos(angle_rad) * (radius + dist_offset)
+                ly = cy + np.sin(angle_rad) * (radius + dist_offset)
+                
+                # Check if visible in halved view
+                if self._halved_view and ly > cy + 2:
+                    return
+
+                f_size = 14 if not self._halved_view else 12
+                painter.setFont(self.get_responsive_font(Fonts.small, f_size + 4, f_size, text))
+                painter.drawText(QRectF(lx - 15, ly - 10, 30, 20), Qt.AlignCenter, text)
+
+            if self._display_mode == "Vectorscope":
+                draw_rot_text("M", -90)
+                if not self._halved_view: draw_rot_text("M", 90)
+                draw_rot_text("S", 0)
+                draw_rot_text("S", 180)
             else:
-                if self._display_mode == "Vectorscope":
-                    painter.setFont(self.get_responsive_font(Fonts.small, 20, 14, "M"))
-                    painter.drawText(QRectF(cx - 10, cy - radius - 16, 20, 14), Qt.AlignCenter, "M")
-                    painter.drawText(QRectF(cx - 10, cy + radius + 2, 20, 14), Qt.AlignCenter, "M")
-                    painter.setFont(self.get_responsive_font(Fonts.small, 16, 14, "S"))
-                    painter.drawText(QRectF(cx - radius - 18, cy - 7, 16, 14), Qt.AlignCenter, "S")
-                    painter.drawText(QRectF(cx + radius + 2, cy - 7, 16, 14), Qt.AlignCenter, "S")
-                else:
-                    painter.setFont(self.get_responsive_font(Fonts.small, 20, 14, "L"))
-                    painter.drawText(QRectF(cx - 10, cy - radius - 16, 20, 14), Qt.AlignCenter, "L")
-                    painter.drawText(QRectF(cx - 10, cy + radius + 2, 20, 14), Qt.AlignCenter, "R")
-                    painter.setFont(self.get_responsive_font(Fonts.small, 16, 14, "L"))
-                    painter.drawText(QRectF(cx - radius - 18, cy - 7, 16, 14), Qt.AlignCenter, "L")
-                    painter.setFont(self.get_responsive_font(Fonts.small, 16, 14, "R"))
-                    painter.drawText(QRectF(cx + radius + 2, cy - 7, 16, 14), Qt.AlignCenter, "R")
+                draw_rot_text("L", -90)
+                draw_rot_text("R", 90 if not self._halved_view else 0) # Adjust for halved view logic
+                draw_rot_text("L", 180)
+                draw_rot_text("R", 0)
+
+        # Correlation bar
 
         # Correlation bar
         if not self._minimal_mode:
@@ -444,6 +472,11 @@ class StereometerModule(BaseModule):
                 mask = mag > 1.0
                 dx[mask] /= mag[mask]
                 dy[mask] /= mag[mask]
+            elif self._guide_mode == "Square":
+                mask = (np.abs(dx) > 1.0) | (np.abs(dy) > 1.0)
+                div = np.maximum(np.abs(dx[mask]), np.abs(dy[mask]))
+                dx[mask] /= div
+                dy[mask] /= div
             else:
                 # Rhombus is the standard M/S boundary
                 mag = np.abs(dx) + np.abs(dy)
@@ -479,6 +512,11 @@ class StereometerModule(BaseModule):
                 mask = mag > 1.0
                 dx[mask] /= mag[mask]
                 dy[mask] /= mag[mask]
+            elif self._guide_mode == "Square":
+                # Square boundary
+                mask = (np.abs(dx) > 1.0) | (np.abs(dy) > 1.0)
+                dx[mask] /= np.maximum(np.abs(dx[mask]), np.abs(dy[mask]))
+                dy[mask] /= np.maximum(np.abs(dx[mask]), np.abs(dy[mask]))
             else:
                 # Square/Rhombus boundary
                 mag = np.abs(dx) + np.abs(dy)

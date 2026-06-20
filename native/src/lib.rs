@@ -8,6 +8,54 @@ thread_local! {
     static PLANNER: RefCell<FftPlanner<f32>> = RefCell::new(FftPlanner::new());
 }
 
+fn apply_tilt_core(magnitude_db: &[f32], freqs: &[f32], tilt_db: f32, pivot_hz: f32) -> Vec<f32> {
+    if tilt_db.abs() < 0.01 {
+        return magnitude_db.to_vec();
+    }
+
+    let pivot = pivot_hz.max(1.0);
+    let len = magnitude_db.len().min(freqs.len());
+    let mut out = Vec::with_capacity(len);
+
+    for i in 0..len {
+        let freq = freqs[i].max(20.0);
+        let octaves = (freq / pivot).log2();
+        out.push(magnitude_db[i] + octaves * tilt_db);
+    }
+
+    out
+}
+
+fn correlation_core(left: &[f32], right: &[f32]) -> f64 {
+    let n = left.len().min(right.len());
+    if n == 0 {
+        return 0.0;
+    }
+
+    let inv_n = 1.0 / n as f64;
+    let mean_l = left.iter().take(n).map(|&v| v as f64).sum::<f64>() * inv_n;
+    let mean_r = right.iter().take(n).map(|&v| v as f64).sum::<f64>() * inv_n;
+
+    let mut l_energy = 0.0f64;
+    let mut r_energy = 0.0f64;
+    let mut cross = 0.0f64;
+
+    for i in 0..n {
+        let lv = left[i] as f64 - mean_l;
+        let rv = right[i] as f64 - mean_r;
+        l_energy += lv * lv;
+        r_energy += rv * rv;
+        cross += lv * rv;
+    }
+
+    let denom = (l_energy * r_energy).sqrt();
+    if denom < 1e-20 {
+        0.0
+    } else {
+        (cross / denom).clamp(-1.0, 1.0)
+    }
+}
+
 // ── Spectrogram Colormap ────────────────────────────────────────────────────
 
 /// Apply a 256-entry RGB LUT to spectrogram history columns and write into buffer_data.
@@ -307,26 +355,7 @@ fn correlation<'py>(
 ) -> PyResult<f64> {
     let l = left.as_array();
     let r = right.as_array();
-    let n = l.len().min(r.len());
-
-    let mut l_energy = 0.0f64;
-    let mut r_energy = 0.0f64;
-    let mut cross = 0.0f64;
-
-    for i in 0..n {
-        let lv = l[i] as f64;
-        let rv = r[i] as f64;
-        l_energy += lv * lv;
-        r_energy += rv * rv;
-        cross += lv * rv;
-    }
-
-    let denom = (l_energy * r_energy).sqrt();
-    if denom < 1e-20 {
-        Ok(0.0)
-    } else {
-        Ok(cross / denom)
-    }
+    Ok(correlation_core(l.as_slice().unwrap_or(&[]), r.as_slice().unwrap_or(&[])))
 }
 
 
@@ -419,6 +448,26 @@ fn compute_fft<'py>(
     
     let arr = numpy::ndarray::Array1::from_vec(mag_db);
     Ok(arr.into_pyarray(py).into())
+}
+
+/// Apply a spectral tilt in dB/octave around a pivot frequency.
+#[pyfunction]
+fn apply_tilt<'py>(
+    py: Python<'py>,
+    magnitude_db: PyReadonlyArray1<'py, f32>,
+    freqs: PyReadonlyArray1<'py, f32>,
+    tilt_db: f32,
+    pivot_hz: f32,
+) -> PyResult<Bound<'py, PyArray1<f32>>> {
+    let mag = magnitude_db.as_array();
+    let freq = freqs.as_array();
+    let out = apply_tilt_core(
+        mag.as_slice().unwrap_or(&[]),
+        freq.as_slice().unwrap_or(&[]),
+        tilt_db,
+        pivot_hz,
+    );
+    Ok(numpy::ndarray::Array1::from_vec(out).into_pyarray(py).into())
 }
 
 
@@ -529,6 +578,43 @@ fn dsp_accel(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(correlation, m)?)?;
     m.add_function(wrap_pyfunction!(apply_gain_and_concat, m)?)?;
     m.add_function(wrap_pyfunction!(compute_fft, m)?)?;
+    m.add_function(wrap_pyfunction!(apply_tilt, m)?)?;
     m.add_function(wrap_pyfunction!(multiband_correlation, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn approx_eq(a: f32, b: f32, eps: f32) {
+        assert!((a - b).abs() <= eps, "{a} != {b}");
+    }
+
+    #[test]
+    fn tilt_is_db_per_octave() {
+        let mag = [0.0, 0.0, 0.0];
+        let freqs = [500.0, 1000.0, 2000.0];
+        let out = apply_tilt_core(&mag, &freqs, 6.0, 1000.0);
+
+        approx_eq(out[0], -6.0, 0.001);
+        approx_eq(out[1], 0.0, 0.001);
+        approx_eq(out[2], 6.0, 0.001);
+    }
+
+    #[test]
+    fn correlation_ignores_dc_offset() {
+        let left = [11.0, 12.0, 13.0, 14.0];
+        let right = [-7.0, -6.0, -5.0, -4.0];
+
+        assert!((correlation_core(&left, &right) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn correlation_detects_inversion_with_offset() {
+        let left = [11.0, 12.0, 13.0, 14.0];
+        let right = [-4.0, -5.0, -6.0, -7.0];
+
+        assert!((correlation_core(&left, &right) + 1.0).abs() < 1e-9);
+    }
 }

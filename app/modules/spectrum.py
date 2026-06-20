@@ -137,8 +137,8 @@ class SpectrumModule(BaseModule):
             
         tm = menu.addMenu("Slope (Tilt)")
         tg = QActionGroup(self)
-        for t_val in [0.0, 1.5, 3.0, 4.5, 6.0]:
-            a = tm.addAction(f"{t_val} dB")
+        for t_val in [-6.0, -4.5, -3.0, -1.5, 0.0, 1.5, 3.0, 4.5, 6.0]:
+            a = tm.addAction(f"{t_val:g} dB/oct")
             a.setCheckable(True)
             a.setChecked(abs(t_val - self._tilt) < 0.1)
             a.triggered.connect(lambda checked, v=t_val: setattr(self, "_tilt", v))
@@ -168,6 +168,13 @@ class SpectrumModule(BaseModule):
             copy_n = min(len(old_l), min_buf)
             self._acc_buf_l[-copy_n:] = old_l[-copy_n:]
             self._acc_buf_r[-copy_n:] = old_r[-copy_n:]
+
+    def _resample_spectrum_to_pixels(self, px_x, mag_max, mag_min, dw):
+        pixel_count = max(2, int(dw))
+        screen_x = np.linspace(0, max(1, pixel_count - 1), pixel_count)
+        max_vals = np.interp(screen_x, px_x, mag_max, left=mag_max[0], right=mag_max[-1])
+        min_vals = np.interp(screen_x, px_x, mag_min, left=mag_min[0], right=mag_min[-1])
+        return screen_x, max_vals, min_vals
 
     def on_audio_data(self, data: np.ndarray):
         l = data[:, 0]
@@ -314,24 +321,22 @@ class SpectrumModule(BaseModule):
         if nb < 2:
             return
 
+        screen_x, mag_max_screen, mag_min_screen = self._resample_spectrum_to_pixels(
+            px_x, mag_max_filtered, mag_min_filtered, dw
+        )
+
         if self._mode in ("Color Bars", "Both"):
             n_bars = 64
             bw = max(2, dw / n_bars - 1)
             bar_vals = np.zeros(n_bars)
             for b in range(n_bars):
-                xs, xe = b / n_bars * dw, (b + 1) / n_bars * dw
-                bar_mask = (px_x >= xs) & (px_x < xe)
+                xs, xe = b / n_bars * len(screen_x), (b + 1) / n_bars * len(screen_x)
+                bar_mask = (screen_x >= xs) & (screen_x < xe)
                 if np.any(bar_mask):
-                    bar_vals[b] = np.mean(mag_max_filtered[bar_mask])
+                    bar_vals[b] = np.max(mag_max_screen[bar_mask])
                 else:
-                    idx = np.searchsorted(px_x, xs)
-                    if idx > 0 and idx < nb:
-                        x0, x1 = px_x[idx-1], px_x[idx]
-                        v0, v1 = mag_max_filtered[idx-1], mag_max_filtered[idx]
-                        t = (xs - x0) / (x1 - x0) if x1 > x0 else 0
-                        bar_vals[b] = v0 + t * (v1 - v0)
-                    elif idx == 0: bar_vals[b] = mag_max_filtered[0]
-                    else: bar_vals[b] = mag_max_filtered[nb-1]
+                    idx = min(len(mag_max_screen) - 1, max(0, int(round(xs))))
+                    bar_vals[b] = mag_max_screen[idx]
 
             for b in range(n_bars):
                 xs = b / n_bars * dw
@@ -347,17 +352,17 @@ class SpectrumModule(BaseModule):
                     painter.fillRect(QRectF(xs + 1, dh - bh, bw, bh), QBrush(col))
 
         if self._mode in ("FFT", "Both"):
-            step = max(1, nb // (int(dw) * 2))
+            step = max(1, len(screen_x) // max(2, min(1400, int(dw) * 2)))
             pts_max, pts_min = [], []
-            for i in range(0, nb, step):
-                frac_max = max(0, min(1, (mag_max_filtered[i] - db_min) / (db_max - db_min)))
-                frac_min = max(0, min(1, (mag_min_filtered[i] - db_min) / (db_max - db_min)))
+            for i in range(0, len(screen_x), step):
+                frac_max = max(0, min(1, (mag_max_screen[i] - db_min) / (db_max - db_min)))
+                frac_min = max(0, min(1, (mag_min_screen[i] - db_min) / (db_max - db_min)))
                 if is_vertical:
-                    pts_max.append(QPointF(dh * frac_max, h - px_x[i]))
-                    pts_min.append(QPointF(dh * frac_min, h - px_x[i]))
+                    pts_max.append(QPointF(dh * frac_max, h - screen_x[i]))
+                    pts_min.append(QPointF(dh * frac_min, h - screen_x[i]))
                 else:
-                    pts_max.append(QPointF(px_x[i], dh * (1.0 - frac_max)))
-                    pts_min.append(QPointF(px_x[i], dh * (1.0 - frac_min)))
+                    pts_max.append(QPointF(screen_x[i], dh * (1.0 - frac_max)))
+                    pts_min.append(QPointF(screen_x[i], dh * (1.0 - frac_min)))
             
             def create_spline(points):
                 path = QPainterPath()

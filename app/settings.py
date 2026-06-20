@@ -102,9 +102,14 @@ class SettingsManager:
     @classmethod
     def load(cls):
         path = cls.get_settings_path()
+        return cls.load_from_file(path)
+
+    @classmethod
+    def load_from_file(cls, path):
+        path = os.fspath(path)
         if os.path.exists(path):
             try:
-                with open(path, "r") as f:
+                with open(path, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
                 print(f"Error loading settings: {e}")
@@ -118,11 +123,22 @@ class SettingsManager:
         Saves settings to disk using a thread-safe, atomic write strategy.
         """
         path = cls.get_settings_path()
+        cls.save_to_file(path, settings)
+
+    @classmethod
+    def save_to_file(cls, path, settings):
+        """
+        Saves settings to a specific JSON path using the same atomic strategy.
+        """
+        path = os.fspath(path)
         with cls._save_lock:
             try:
+                directory = os.path.dirname(os.path.abspath(path))
+                if directory:
+                    os.makedirs(directory, exist_ok=True)
                 # Save to a temporary file first to prevent corruption if the app crashes during write
                 temp_path = path + ".tmp"
-                with open(temp_path, "w") as f:
+                with open(temp_path, "w", encoding="utf-8") as f:
                     json.dump(settings, f, indent=4)
                 
                 # Atomic replace
@@ -130,6 +146,8 @@ class SettingsManager:
                     os.replace(temp_path, path)
                 else:
                     os.rename(temp_path, path)
+                return True
             except Exception as e:
                 import logging
                 logging.error(f"Settings: Failed to save to {path}: {e}")
+                return False
