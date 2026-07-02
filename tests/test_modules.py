@@ -3,6 +3,7 @@ import numpy as np
 from unittest.mock import MagicMock
 from PySide6.QtWidgets import QApplication
 from app.modules.loudness_meter import LoudnessModule
+from app.modules.vu_meter import VUMeterModule
 
 # Create a global QApplication for tests that need it
 app = QApplication.instance() or QApplication([])
@@ -77,3 +78,35 @@ def test_loudness_module_settings_persistence():
     assert saved["mode"] == "RMS"
     assert saved["orientation"] == "Vertical"
     assert saved["show_peak"] == False
+
+def test_vu_clip_led_follows_vu_zero_not_sample_peak():
+    engine = MockEngine()
+    module = VUMeterModule(engine)
+    module._rise_coeff = 1.0
+
+    t = np.arange(4096) / 44100.0
+    tone = np.sin(2 * np.pi * 1000 * t).astype(np.float32)
+    stereo = np.column_stack([tone, tone])
+
+    module.on_audio_data(stereo)
+
+    assert module._needle_l < 0.0
+    assert module._needle_r < 0.0
+    assert module._peak_lit_l
+    assert module._peak_lit_r
+    assert not module._clip_lit_l
+    assert not module._clip_lit_r
+
+def test_vu_clip_led_lights_at_vu_zero():
+    engine = MockEngine()
+    module = VUMeterModule(engine)
+    module._rise_coeff = 1.0
+
+    stereo = np.ones((1024, 2), dtype=np.float32)
+
+    module.on_audio_data(stereo)
+
+    assert module._needle_l == 0.0
+    assert module._needle_r == 0.0
+    assert module._clip_lit_l
+    assert module._clip_lit_r

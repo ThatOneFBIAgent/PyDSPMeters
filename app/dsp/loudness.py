@@ -93,6 +93,16 @@ class LoudnessMeter:
         # Caching
         self._last_integrated_lufs = -120.0
         self._integrated_dirty = True
+        self._lufs_momentary_channels = np.zeros(channels, dtype=np.float64) - 120.0
+        self._lufs_shortterm_channels = np.zeros(channels, dtype=np.float64) - 120.0
+        self._lufs_momentary = -120.0
+        self._lufs_shortterm = -120.0
+        self._rms_momentary_channels = np.zeros(channels, dtype=np.float64) - 120.0
+        self._rms_shortterm_channels = np.zeros(channels, dtype=np.float64) - 120.0
+        self._rms_momentary = -120.0
+        self._rms_shortterm = -120.0
+        self._true_peak_channels = np.zeros(channels, dtype=np.float64) - 120.0
+        self._true_peak = -120.0
 
     def process(self, data: np.ndarray):
         """Feed new audio data into the meter."""
@@ -120,6 +130,8 @@ class LoudnessMeter:
         while self._int_accum_samples >= self._int_step_size:
             self._update_integrated_blocks()
             self._int_accum_samples -= self._int_step_size
+
+        self._refresh_cached_levels()
 
     def _update_integrated_blocks(self):
         """Calculate mean square for the last 400ms and store for gated average."""
@@ -163,21 +175,63 @@ class LoudnessMeter:
             return -120.0
         return float(10.0 * np.log10(ms))
 
+    @staticmethod
+    def _channels_to_db(ms: np.ndarray) -> np.ndarray:
+        return 10.0 * np.log10(np.clip(ms, 1e-12, None))
+
+    @staticmethod
+    def _combined_db(ms: np.ndarray) -> float:
+        total = float(np.mean(ms))
+        if total < 1e-20:
+            return -120.0
+        return float(10.0 * np.log10(total))
+
+    @staticmethod
+    def _channels_to_lufs(ms: np.ndarray) -> np.ndarray:
+        return -0.691 + LoudnessMeter._channels_to_db(ms)
+
+    @staticmethod
+    def _combined_lufs(ms: np.ndarray) -> float:
+        total = float(np.sum(ms))
+        if total < 1e-20:
+            return -120.0
+        return float(-0.691 + 10.0 * np.log10(total))
+
+    def _refresh_cached_levels(self) -> None:
+        """Update all frequently-read meter values once per processed block."""
+        momentary = self._get_last_n(self._buffer, self._momentary_samples)
+        shortterm = self._get_last_n(self._buffer, self._shortterm_samples)
+        raw_momentary = self._get_last_n(self._raw_buffer, self._momentary_samples)
+        raw_shortterm = self._get_last_n(self._raw_buffer, self._shortterm_samples)
+
+        momentary_ms = np.mean(momentary ** 2, axis=0)
+        shortterm_ms = np.mean(shortterm ** 2, axis=0)
+        raw_momentary_ms = np.mean(raw_momentary ** 2, axis=0)
+        raw_shortterm_ms = np.mean(raw_shortterm ** 2, axis=0)
+
+        self._lufs_momentary_channels = self._channels_to_lufs(momentary_ms)
+        self._lufs_shortterm_channels = self._channels_to_lufs(shortterm_ms)
+        self._lufs_momentary = self._combined_lufs(momentary_ms)
+        self._lufs_shortterm = self._combined_lufs(shortterm_ms)
+
+        self._rms_momentary_channels = self._channels_to_db(raw_momentary_ms)
+        self._rms_shortterm_channels = self._channels_to_db(raw_shortterm_ms)
+        self._rms_momentary = self._combined_db(raw_momentary_ms)
+        self._rms_shortterm = self._combined_db(raw_shortterm_ms)
+
+        true_peak_segment = self._get_last_n(self._raw_buffer, int(self.sample_rate * 0.1))
+        self._true_peak_channels = self._calculate_tp_channels(true_peak_segment)
+        self._true_peak = float(np.max(self._true_peak_channels))
+
     @property
     def lufs_momentary(self) -> float:
         """Momentary loudness (400 ms) in LUFS."""
-        ms = self._mean_square_lufs(self._momentary_samples)
-        if ms < 1e-20:
-            return -120.0
-        return -0.691 + 10.0 * np.log10(ms)
+        return self._lufs_momentary
 
     @property
     def lufs_shortterm(self) -> float:
         """Short-term loudness (3 s) in LUFS."""
-        ms = self._mean_square_lufs(self._shortterm_samples)
-        if ms < 1e-20:
-            return -120.0
-        return -0.691 + 10.0 * np.log10(ms)
+        return self._lufs_shortterm
 
     @property
     def lufs_integrated(self) -> float:
@@ -217,48 +271,38 @@ class LoudnessMeter:
 
     @property
     def lufs_momentary_channels(self) -> np.ndarray:
-        segment = self._get_last_n(self._buffer, self._momentary_samples)
-        ms = np.mean(segment**2, axis=0)
-        return -0.691 + 10.0 * np.log10(np.clip(ms, 1e-12, None))
+        return self._lufs_momentary_channels
 
     @property
     def lufs_shortterm_channels(self) -> np.ndarray:
-        segment = self._get_last_n(self._buffer, self._shortterm_samples)
-        ms = np.mean(segment**2, axis=0)
-        return -0.691 + 10.0 * np.log10(np.clip(ms, 1e-12, None))
+        return self._lufs_shortterm_channels
 
     @property
     def rms_momentary(self) -> float:
         """Momentary RMS (~400 ms) in dB."""
-        return self._rms_db(self._momentary_samples)
+        return self._rms_momentary
 
     @property
     def rms_shortterm(self) -> float:
         """Short-term RMS (~3 s) in dB."""
-        return self._rms_db(self._shortterm_samples)
+        return self._rms_shortterm
 
     @property
     def rms_momentary_channels(self) -> np.ndarray:
-        segment = self._get_last_n(self._raw_buffer, self._momentary_samples)
-        ms = np.mean(segment**2, axis=0)
-        return 10.0 * np.log10(np.clip(ms, 1e-12, None))
+        return self._rms_momentary_channels
 
     @property
     def rms_shortterm_channels(self) -> np.ndarray:
-        segment = self._get_last_n(self._raw_buffer, self._shortterm_samples)
-        ms = np.mean(segment**2, axis=0)
-        return 10.0 * np.log10(np.clip(ms, 1e-12, None))
+        return self._rms_shortterm_channels
 
     @property
     def true_peak(self) -> float:
         """True peak (oversampled) of the most recent buffer content in dBTP."""
-        segment = self._get_last_n(self._raw_buffer, int(self.sample_rate * 0.1)) # 100ms window
-        return float(np.max(self._calculate_tp_channels(segment)))
+        return self._true_peak
 
     @property
     def true_peak_channels(self) -> np.ndarray:
-        segment = self._get_last_n(self._raw_buffer, int(self.sample_rate * 0.1))
-        return self._calculate_tp_channels(segment)
+        return self._true_peak_channels
 
     def _calculate_tp_channels(self, data: np.ndarray) -> np.ndarray:
         """Estimate True Peak via 4x oversampling."""

@@ -78,6 +78,7 @@ Thumbs.db
 
 # Settings created by the program
 settings.json
+profile_logs/
 
 # Temporary build files/installation media
 *.iss

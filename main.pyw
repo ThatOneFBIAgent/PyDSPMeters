@@ -169,6 +169,9 @@ def main():
     # Initialize Logging and Global Exception Handling as early as possible
     setup_logging()
     setup_global_exception_handler()
+    import logging
+    from app.dsp import accel as dsp_accel
+    logging.info(f"DSP accelerator active: {dsp_accel.is_accelerated()}")
 
     # Handle Ctrl+C (SIGINT)
     import signal, sys

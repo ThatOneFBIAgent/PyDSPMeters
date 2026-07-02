@@ -22,6 +22,7 @@ from app.audio_engine import AudioEngine
 from app.base_module import BaseModule
 from app.modules import MODULE_REGISTRY
 from app.settings import SettingsManager
+from app.utils import perf_stats
 
 # Ensure all modules register themselves
 from app.modules import oscilloscope, loudness_meter, vu_meter  # noqa
@@ -422,6 +423,9 @@ class MainWindow(QMainWindow):
         self._appbar_active = False # Will be restored in finish_loading
         self._loading_settings = True
         self._is_ready = False
+        self._ghost_hover_ready = False
+        self._ghost_ui_floating = None
+        self._ghost_ui_visible = None
         self._update_ghost_mode()
         
         # Divider settings (must be after apply_theme to use correct BORDER color)
@@ -478,6 +482,8 @@ class MainWindow(QMainWindow):
         
         if hasattr(self, "_loading_overlay") and self._loading_overlay:
             self._loading_overlay.fade_out()
+        else:
+            self._maybe_enable_ghost_hover()
         
         # Restore appbar after window is fully laid out
         if getattr(self, "_appbar_saved", False):
@@ -514,6 +520,7 @@ class MainWindow(QMainWindow):
         logging.info(f"Audio: Attempting to start engine with device index {best_index}")
         self.audio_engine.start(best_index)
         self._is_ready = True
+        self._maybe_enable_ghost_hover()
 
     # ── Device Management ───────────────────────────────────────────────────
 
@@ -962,6 +969,7 @@ class MainWindow(QMainWindow):
         """)
 
     def _update_ghost_mode(self):
+        started = time.perf_counter()
         # Ghost mode active if manually toggled OR if it's a 'Ghost/Glass/Transparent' theme
         theme = current_theme_name()
         is_transparent = "Transparent" in theme or "Glass" in theme
@@ -970,26 +978,35 @@ class MainWindow(QMainWindow):
         main_layout = self.centralWidget().layout()
         if main_layout:
             if ghost_active:
-                if self.title_bar.parentWidget() != self:
+                if self._ghost_ui_floating is not True or self.title_bar.parentWidget() != self:
                     main_layout.removeWidget(self.title_bar)
                     self.title_bar.setParent(self)
-                self.title_bar.setGeometry(0, 0, self.width(), 28)
-                self.title_bar.raise_()
+                    self.title_bar.raise_()
+                    self._ghost_ui_floating = True
+                target_geometry = QRect(0, 0, self.width(), 28)
+                if self.title_bar.geometry() != target_geometry:
+                    self.title_bar.setGeometry(target_geometry)
             else:
-                if self.title_bar.parentWidget() != self.centralWidget():
+                if self._ghost_ui_floating is not False or self.title_bar.parentWidget() != self.centralWidget():
                     self.title_bar.setParent(self.centralWidget())
                     main_layout.insertWidget(0, self.title_bar)
+                    self._ghost_ui_floating = False
                     
-        show = not ghost_active or self.underMouse()
-        self.title_bar.setVisible(show)
-        self._grip.setVisible(show)
+        show = not ghost_active or (self._ghost_hover_ready and self.underMouse())
+        if self._ghost_ui_visible is not show:
+            self.title_bar.setVisible(show)
+            self._grip.setVisible(show)
+            self._ghost_ui_visible = show
+        perf_stats.record_timing("window.ghost_mode_update", time.perf_counter() - started)
 
     def enterEvent(self, event):
-        self._update_ghost_mode()
+        if self._ghost_hover_ready:
+            self._update_ghost_mode()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self._update_ghost_mode()
+        if self._ghost_hover_ready:
+            self._update_ghost_mode()
         super().leaveEvent(event)
 
     # ── App Bar ──────────────────────────────────────────────────────────────
@@ -1374,6 +1391,17 @@ class MainWindow(QMainWindow):
 
     def _on_overlay_finished(self):
         self._loading_overlay = None
+        self._maybe_enable_ghost_hover()
+
+    def _maybe_enable_ghost_hover(self):
+        if self._ghost_hover_ready:
+            return
+        if getattr(self, "_loading_overlay", None) is not None:
+            return
+        if not getattr(self, "_is_ready", False):
+            return
+        self._ghost_hover_ready = True
+        self._update_ghost_mode()
 
     def contextMenuEvent(self, event):
         self._show_gear_menu()

@@ -6,9 +6,11 @@ Uses sounddevice for low-latency capture with a thread-safe queue bridge to Qt.
 import sys
 import queue
 import logging
+import time
 import numpy as np
 import sounddevice as sd
 from app.dsp import accel as dsp_accel
+from app.utils import perf_stats
 from PySide6.QtCore import QObject, Signal, QTimer, Slot
 
 
@@ -277,48 +279,59 @@ class AudioEngine(QObject):
     @Slot()
     def _drain_queue(self):
         """Pull all available audio blocks from the queue and emit signals."""
-        blocks = []
-        while True:
-            try:
-                blocks.append(self._queue.get_nowait())
-            except queue.Empty:
-                break
+        started = time.perf_counter()
+        block_count = 0
+        sample_count = 0
+        try:
+            blocks = []
+            while True:
+                try:
+                    blocks.append(self._queue.get_nowait())
+                except queue.Empty:
+                    break
 
-        if not blocks:
+            block_count = len(blocks)
+            if not blocks:
+                if self._is_py314:
+                    # On 3.14, if we get no blocks, we treat it as potential silence
+                    # to trigger the keep-alive output stream if it lasts too long.
+                    self._handle_silence_fallback(is_silent=True, frames=self.block_size)
+                return
+
+            # Accelerated gain application and block concatenation
+            combined = dsp_accel.apply_gain_and_concat(blocks, self._gain_multiplier, self.channels)
+            n = len(combined)
+            sample_count = n
+
+            # Python 3.14 Workaround: Monitor for silence
             if self._is_py314:
-                # On 3.14, if we get no blocks, we treat it as potential silence
-                # to trigger the keep-alive output stream if it lasts too long.
-                self._handle_silence_fallback(is_silent=True, frames=self.block_size)
-            return
+                # Check if the combined block is effectively silent (RMS-ish)
+                is_silent = np.max(np.abs(combined)) < 1e-5
+                self._handle_silence_fallback(is_silent, n)
+            buf_len = len(self.buffer)
 
-        # Accelerated gain application and block concatenation
-        combined = dsp_accel.apply_gain_and_concat(blocks, self._gain_multiplier, self.channels)
-        n = len(combined)
-
-        # Python 3.14 Workaround: Monitor for silence
-        if self._is_py314:
-            # Check if the combined block is effectively silent (RMS-ish)
-            is_silent = np.max(np.abs(combined)) < 1e-5
-            self._handle_silence_fallback(is_silent, n)
-        buf_len = len(self.buffer)
-
-        # Update circular history buffer
-        if n >= buf_len:
-            self.buffer[:] = combined[-buf_len:]
-            self._write_pos = 0
-        else:
-            end_pos = self._write_pos + n
-            if end_pos <= buf_len:
-                self.buffer[self._write_pos:end_pos] = combined
+            # Update circular history buffer
+            if n >= buf_len:
+                self.buffer[:] = combined[-buf_len:]
+                self._write_pos = 0
             else:
-                rem = end_pos - buf_len
-                first_part = n - rem
-                self.buffer[self._write_pos:] = combined[:first_part]
-                self.buffer[:rem] = combined[first_part:]
-            self._write_pos = (self._write_pos + n) % buf_len
+                end_pos = self._write_pos + n
+                if end_pos <= buf_len:
+                    self.buffer[self._write_pos:end_pos] = combined
+                else:
+                    rem = end_pos - buf_len
+                    first_part = n - rem
+                    self.buffer[self._write_pos:] = combined[:first_part]
+                    self.buffer[:rem] = combined[first_part:]
+                self._write_pos = (self._write_pos + n) % buf_len
 
-        self._total_written += n
-        self.data_ready.emit(combined)
+            self._total_written += n
+            self.data_ready.emit(combined)
+        finally:
+            perf_stats.record_timing("audio.drain_queue", time.perf_counter() - started)
+            perf_stats.record_interval("audio.drain_interval")
+            perf_stats.record_count("audio.blocks_per_drain", block_count)
+            perf_stats.record_count("audio.samples_per_drain", sample_count)
 
     # ── Buffer Access ───────────────────────────────────────────────────────
 

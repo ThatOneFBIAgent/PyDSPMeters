@@ -3,6 +3,8 @@ Loudness Meter Module: Selectable LUFS or RMS with compact layout and mode badge
 Supports stereo monitoring, configurable meters, and vertical/horizontal modes.
 """
 
+import threading
+
 import numpy as np
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QLinearGradient
 from PySide6.QtCore import Qt, QRectF
@@ -46,6 +48,7 @@ def _short_unit(mode, avail_w):
 class LoudnessModule(BaseModule):
 
     def __init__(self, audio_engine, parent=None):
+        self._meter_lock = threading.Lock()
         self._meter = LoudnessMeter(sample_rate=audio_engine.sample_rate, channels=audio_engine.channels)
         self._meter_sample_rate = audio_engine.sample_rate
         self._meter_channels = audio_engine.channels
@@ -92,6 +95,7 @@ class LoudnessModule(BaseModule):
         
         super().__init__(audio_engine, title="Loudness · LUFS", parent=parent)
         self.canvas.set_render_func(self._render)
+        self.set_async_audio_processing(True)
 
     def build_context_menu(self, menu):
         from PySide6.QtGui import QActionGroup
@@ -195,7 +199,8 @@ class LoudnessModule(BaseModule):
         a.setEnabled(self._mode == "LUFS")
 
     def _reset_integrated(self):
-        self._meter.reset_integrated()
+        with self._meter_lock:
+            self._meter.reset_integrated()
         self._lufs_int = -120.0
         self._disp_int = -60.0
 
@@ -204,22 +209,49 @@ class LoudnessModule(BaseModule):
         self.header.set_title(f"Loudness · {mode}")
 
     def on_audio_data(self, data: np.ndarray):
-        self._ensure_meter_matches_engine()
-        self._meter.process(data)
-        
+        self.apply_audio_result(self.process_audio_data(data))
+
+    def process_audio_data(self, data: np.ndarray):
+        with self._meter_lock:
+            self._ensure_meter_matches_engine_locked()
+            self._meter.process(data)
+
+            return {
+                "channels": self._meter_channels,
+                "lufs_m": self._meter.lufs_momentary_channels.copy(),
+                "lufs_st": self._meter.lufs_shortterm_channels.copy(),
+                "lufs_int": self._meter.lufs_integrated,
+                "rms_m": self._meter.rms_momentary_channels.copy(),
+                "rms_st": self._meter.rms_shortterm_channels.copy(),
+                "peak": self._meter.true_peak_channels.copy(),
+                "lufs_m_combined": self._meter.lufs_momentary,
+                "lufs_st_combined": self._meter.lufs_shortterm,
+                "rms_m_combined": self._meter.rms_momentary,
+                "rms_st_combined": self._meter.rms_shortterm,
+                "peak_combined": self._meter.true_peak,
+            }
+
+    def apply_audio_result(self, result):
+        if not result:
+            return
+
+        ch = int(result.get("channels", self.audio_engine.channels))
+        if len(self._lufs_m) != ch:
+            self._reset_display_state(ch)
+
         # Get stereo values
-        self._lufs_m = self._meter.lufs_momentary_channels
-        self._lufs_st = self._meter.lufs_shortterm_channels
-        self._lufs_int = self._meter.lufs_integrated
-        self._rms_m = self._meter.rms_momentary_channels
-        self._rms_st = self._meter.rms_shortterm_channels
-        self._peak = self._meter.true_peak_channels
-        self._lufs_m_combined = self._meter.lufs_momentary
-        self._lufs_st_combined = self._meter.lufs_shortterm
-        self._rms_m_combined = self._meter.rms_momentary
-        self._rms_st_combined = self._meter.rms_shortterm
-        self._peak_combined = self._meter.true_peak
-        
+        self._lufs_m = result["lufs_m"]
+        self._lufs_st = result["lufs_st"]
+        self._lufs_int = result["lufs_int"]
+        self._rms_m = result["rms_m"]
+        self._rms_st = result["rms_st"]
+        self._peak = result["peak"]
+        self._lufs_m_combined = result["lufs_m_combined"]
+        self._lufs_st_combined = result["lufs_st_combined"]
+        self._rms_m_combined = result["rms_m_combined"]
+        self._rms_st_combined = result["rms_st_combined"]
+        self._peak_combined = result["peak_combined"]
+
         # Get alpha from reactivity preset
         alpha = REACTIVITY_PRESETS.get(self._reactivity, 0.4)
         
@@ -258,18 +290,30 @@ class LoudnessModule(BaseModule):
             self._peak_follow = max(db_floor, self._peak_follow)
 
     def _ensure_meter_matches_engine(self):
+        with self._meter_lock:
+            self._ensure_meter_matches_engine_locked()
+
+    def _ensure_meter_matches_engine_locked(self):
         if (self._meter_sample_rate != self.audio_engine.sample_rate or
                 self._meter_channels != self.audio_engine.channels):
-            self.on_channels_changed()
+            ch = self.audio_engine.channels
+            self._meter = LoudnessMeter(sample_rate=self.audio_engine.sample_rate, channels=ch)
+            self._meter_sample_rate = self.audio_engine.sample_rate
+            self._meter_channels = ch
 
     def on_channels_changed(self):
         """Reset buffers and meter when channel count changes."""
         ch = self.audio_engine.channels
-        self._meter = LoudnessMeter(sample_rate=self.audio_engine.sample_rate, channels=ch)
-        self._meter_sample_rate = self.audio_engine.sample_rate
-        self._meter_channels = ch
+        with self._meter_lock:
+            self._meter = LoudnessMeter(sample_rate=self.audio_engine.sample_rate, channels=ch)
+            self._meter_sample_rate = self.audio_engine.sample_rate
+            self._meter_channels = ch
+        self._reset_display_state(ch)
+
+    def _reset_display_state(self, ch: int):
         self._lufs_m = np.zeros(ch) - 120.0
         self._lufs_st = np.zeros(ch) - 120.0
+        self._lufs_int = -120.0
         self._rms_m = np.zeros(ch) - 120.0
         self._rms_st = np.zeros(ch) - 120.0
         self._peak = np.zeros(ch) - 120.0
@@ -280,10 +324,12 @@ class LoudnessModule(BaseModule):
         self._peak_combined = -120.0
         self._disp_m = np.zeros(ch) - 60.0
         self._disp_st = np.zeros(ch) - 60.0
+        self._disp_int = -60.0
         self._disp_peak = np.zeros(ch) - 60.0
         self._disp_m_combined = -60.0
         self._disp_st_combined = -60.0
         self._disp_peak_combined = -60.0
+        self._peak_follow = -60.0
 
     def get_settings(self):
         return {

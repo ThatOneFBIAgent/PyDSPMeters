@@ -1,38 +1,39 @@
-# PyDSPMeters 🎛️
-> **Professional-grade, high-performance audio visualization suite built for modern workflows.**
+# PyDSPMeters
+
+> Professional-grade, high-performance audio visualization suite built for modern workflows.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://python.org)
 [![PySide6](https://img.shields.io/badge/UI-PySide6-brightgreen.svg)](https://pyside.org)
-[![Performance](https://img.shields.io/badge/DSP-NumPy-orange.svg)](https://numpy.org)
+[![Performance](https://img.shields.io/badge/DSP-NumPy%20%2B%20Rust-orange.svg)](https://numpy.org)
 
-PyDSPMeters is a modular, ultra-responsive audio monitoring suite designed to rival professional desktop solutions. It provides a flexible, always-on-top interface for engineers, producers, and audiophiles who need critical signal feedback without sacrificing screen real estate, both in Windows (10 and 11) and Linux (Gnome/KDE/etc.✝).
-
----
-
-## ⚡ Engineered for Performance
-
-Built from the ground up to handle high-resolution displays and high-density audio streams, PyDSPMeters utilizes a optimized processing pipeline:
-
-*   **Zero-Copy DSP**: Leveraging NumPy's vectorized operations for lightning-fast FFT calculations and signal analysis.
-*   **Rust PyO3 Native Acceleration**✝✝: Performance critical hot-paths (bulk array modifications, circular buffers, column interpolations) are processed via a zero-copy compiled Rust module (`dsp_accel`), allowing the app to hit locked 60 FPS while keeping CPU usage low.
-*   **Circular Buffer Rendering**: Advanced `QImage` caching for modules like the Spectrogram ensures smooth scrolling even at 4K/8K resolutions.
-*   **Low-Latency Hooking**: Direct interface with system audio drivers via PyAudio with minimal buffer overhead.
-*   **Adaptive UI**: Dynamic text scaling and intelligent layout distribution that keeps meters readable from 60px to full-screen.
-
-✝✝: Requires Rust toolchain and PyO3 installed, see Rust Acceleration section below for more info. 
+PyDSPMeters is a modular, always-on-top audio monitoring suite for engineers, producers, and audio nerds who want critical signal feedback without giving up screen real estate. It targets Windows 10/11 and should also run on common Linux desktops, though Linux builds are less tested.
 
 ---
 
-## 🏗️ Infinite Modularity
+## Engineered For Performance
 
-PyDSPMeters adapts to *your* workflow, not the other way around.
+PyDSPMeters is built around compact audio blocks, vectorized DSP, and Qt painting that stays on the main thread where it belongs.
 
-*   **Stackable Architecture**: Add, remove, and reorder modules on the fly. Build exactly the monitoring rig you need.
-*   **Omni-Layout**: Seamlessly toggle between **Vertical** and **Horizontal** modes. Fit the meters into a side-bar, a bottom-strip, or a dedicated second monitor.
-*   **Ghost Mode**: Transparent and Glass presets combined with an auto-hiding title bar allow the meters to "float" over your DAW or editor.
-*   **Edge Snapping**: Intelligent window management that locks to screen edges for a pixel-perfect setup.
-*   **AppBar Functionality**: (via Ctypes), which enables PyDSPMeters to integrate with other applications by reserving space for itself, making for a hassle-free docking experience. (Windows-only for now)
+* **Vectorized DSP**: NumPy/SciPy handle FFTs, filters, loudness metering, and signal analysis.
+* **Rust native acceleration**: The optional `dsp_accel` module speeds up hot paths such as bulk array operations, circular buffers, waveform reduction, spectrogram column generation, and correlation helpers.
+* **Worker-thread audio processing**: Heavy module processing can run through a latest-only DSP worker pool. The Qt main thread stays focused on painting and window management while stale audio jobs are dropped instead of queued into lag.
+* **Runtime profiling tools**: `profile_app.py` records stack samples, paint cadence, audio queue drain timing, module worker timing, and memory snapshots under `profile_logs/`.
+* **Circular buffer rendering**: Modules such as Spectrogram use cached image buffers for smooth scrolling.
+* **Low-latency capture**: SoundDevice/PortAudio feeds compact blocks into a Qt-side queue bridge.
+* **Adaptive UI**: Dynamic text scaling and layout distribution keep meters readable from tiny strips to full-height panels.
+
+---
+
+## Infinite Modularity
+
+PyDSPMeters adapts to your workflow.
+
+* **Stackable architecture**: Add, remove, and reorder modules on the fly.
+* **Omni-layout**: Toggle between vertical stacking and horizontal strips.
+* **Ghost mode**: Transparent and glass presets combine with an auto-hiding title bar for floating meters.
+* **Edge snapping**: Window management that locks to screen edges.
+* **AppBar functionality**: Windows-only docking mode that reserves desktop space for PyDSPMeters.
 
 ![1](demos/1.png)
 ![2](demos/2.png)
@@ -46,52 +47,44 @@ PyDSPMeters adapts to *your* workflow, not the other way around.
 
 ---
 
-## 🎚️ The Visualization Suite
+## Visualization Suite
 
 | Module | Description | Key Features |
 | :--- | :--- | :--- |
-| **Loudness** | EBU R128 Compliant | Integrated LUFS, RMS, and Peak monitoring. |
-| **Spectrum** | High-Res FFT | Mel/Log scales, spatial smoothing, and peak tracking. |
-| **Stereo** | Phase Analysis | Lissajous rendering and multi-band correlation. |
-| **Spectrogram** | Frequency History | Optimized circular heatmap with customizable palettes. |
-| **Waveform** | Amplitude History | Mirrored intensity-based waveform with real-time scaling. |
-| **VU Meter** | Analog Classic | Precision ballistics with themed LED status indicators. |
-| **Oscilloscope** | Signal Detail | Ultra-responsive waveform plotting at high zoom levels. |
+| **Loudness** | EBU R128 style metering | Integrated LUFS, RMS, true peak, worker-thread processing. |
+| **Spectrum** | High-resolution FFT | Mel/log/linear scales, tilt, smoothing, and peak tracking. |
+| **Stereo** | Phase analysis | Lissajous/vectorscope rendering and multi-band correlation. |
+| **Spectrogram** | Frequency history | Circular heatmap buffer with customizable palettes. |
+| **Waveform** | Amplitude history | Mirrored intensity-based waveform with real-time scaling. |
+| **VU Meter** | Analog classic | Precision ballistics with themed peak and clip indicators. |
+| **Oscilloscope** | Signal detail | Responsive waveform plotting at high zoom levels. |
 
 ---
 
-## 🎨 Theme Engine
+## Theme Engine
 
-Express your aesthetic with a wide range of built-in presets such as:
+Built-in presets include Midnight, Modern Light, Abyss, Transparent Ghost, Aurora, Crimson, Solar, and more. Custom themes can be created by editing the generated `themes.json` in the app data directory, or by using `app/theme.py` as a base.
 
-*   **Midnight**: Deep studio dark with vibrant cyan accents.
-*   **Modern Light**: Clean, professional light theme with indigo/blue meters.
-*   **Abyss**: Pure black OLED-ready interface.
-*   **Transparent Ghost**: Borderless, floating UI for minimal distraction.
-*   **Aurora, Crimson, Solar**: High-contrast, color-focused palettes for visibility.
-*   **And so on!** You can also create your own themes by modifying the `THEME_PRESETS` dictionary in `app/theme.py`.
 ---
 
-## 📦 Getting Started
+## Getting Started
 
 ### Prerequisites
-*   Python 3.9+
-*   Audio Input Device (Microphone, Stereo Mix, or Virtual Cable)
+
+* Python 3.9+
+* An audio input device, Stereo Mix, loopback device, or virtual cable
 
 ### Installation
+
 ```bash
-# Clone the repository
 git clone https://github.com/ThatOneFBIAgent/PyDSPMeters.git
 cd PyDSPMeters
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Launch
-python main.py
+pip install --find-links ./wheels dsp_accel
+python main.pyw
 ```
 
-Additionally you can run `python build_dist.py` to compile a standalone executable, if you have nuitka and a C++ compiler installed. Or just create a shortcut (or run via terminal) using **pythonw** to hide the console:
+To launch without a console on Windows, create a shortcut to `pythonw`:
 
 ```bash
 pythonw "path/to/main.pyw"
@@ -99,61 +92,104 @@ pythonw "path/to/main.pyw"
 
 ---
 
-## 🏎️ Rust Native Acceleration (dsp_accel)
+## Building A Standalone Executable
 
-PyDSPMeters includes a custom-built Rust crate (`dsp_accel`) using `PyO3` and `maturin` that drastically accelerates DSP processing and display buffering. 
-The application includes a graceful fallback system—if the Rust module is not compiled or fails to load, it will seamlessly fall back to pure Python/NumPy logic (meaning the app will always run, just slightly slower).
+The build helper prefers Nuitka when available and falls back to PyInstaller:
 
-You can build the native module using the following steps, but pre-compiled wheels are available in the wheels/ folder, which you can do `pip install --find-links ./wheels dsp_accel` (it'll automatically pick the right one for your system).
+```bash
+python build_dist.py --yes
+```
 
-### Building the Native Module
-If you are developing or running from source and want maximum performance, you must compile the Rust crate. You will need:
-1. [Rust Toolchain](https://rustup.rs/) (cargo/rustc)
-2. Python development headers
-3. `maturin` installed (`pip install maturin`)
+For a direct PyInstaller build that includes the executable icon, runtime icon file, and Rust accelerator:
 
-**Build Command:**
+```powershell
+python -m PyInstaller --noconfirm --onefile --windowed --name=PyDSPMeters --distpath=dist --workpath=build --clean --hidden-import=app --hidden-import=dsp_accel --hidden-import=dsp_accel.dsp_accel --collect-submodules=dsp_accel --icon=icon.ico --add-data "icon.ico;." main.pyw
+```
+
+The output will be written to:
+
+```text
+dist/PyDSPMeters.exe
+```
+
+The application logs whether the Rust accelerator is active at startup:
+
+```text
+DSP accelerator active: True
+```
+
+---
+
+## Rust Native Acceleration
+
+PyDSPMeters includes a custom Rust crate, `dsp_accel`, built with PyO3 and maturin. If it is unavailable, the app falls back to Python/NumPy implementations so it can still run, just with less headroom.
+
+Precompiled wheels are included under `wheels/`:
+
+```bash
+pip install --find-links ./wheels dsp_accel
+```
+
+To build the native module yourself:
+
 ```bash
 cd native
 maturin build --release
 pip install target/wheels/dsp_accel-*.whl --force-reinstall
 ```
 
-### Common Troubleshooting
-*   **Missing Visual C++ Build Tools (Windows)**: If `maturin` fails on Windows, ensure you have the "Desktop development with C++" workload installed via Visual Studio Installer.
-*   **Environment Not Found**: If `maturin` complains about missing `VIRTUAL_ENV`, it means you aren't running inside an active Python virtual environment. You can either activate your venv or build the wheel with `maturin build --release` and install it manually via pip as shown above.
-*   **Verifying it works**: The app will automatically route processing through Rust if the module is installed. You can verify it's working if CPU usage drops significantly and visual stutters in the Spectrogram and Waveform modules disappear.
+On Windows, install the Visual Studio "Desktop development with C++" workload if maturin cannot find a compiler.
 
 ---
 
-## ⌨️ Shortcuts & Workflow
+## Profiling
 
-*   **Right-Click**: Access deep settings for any specific module (Scale, Speed, Channels).
-*   **⚙ Gear Icon**: Global configuration (Device selection, Themes, Input Gain, Label Scaling).
-*   **+ Plus Icon**: Instantly append new modules to the current layout.
-*   **▥/▤ Layout Icon**: Switch between vertical stacking and horizontal strips.
-*   **Portability**: PyDSPMeters is fully portable; all configurations are stored in `settings.json` within the roaming application data folder.
+Run a full app session with lightweight profiling:
 
----
-
-## 🛠️ Development & Testing
-
-We utilize `pytest` for ensuring DSP accuracy and stability:
 ```bash
-python -m pytest
+python profile_app.py --interval 0.1 --top 80
 ```
 
-## 📝 Known Issues
+Close the app normally. A report folder will be written under `profile_logs/`, including:
 
-I am aware of an issue with Python 3.14 and SoundDevice where the CFFI wrapper returns NoneType instead of None after not playing anything for a while. This causes the app to soft-crash, as in you can intereact with everything but no matter the audio device you choose, nothing happens.
+* `profile_report.txt`: human-readable timing report.
+* `profile.json`: structured metrics.
+* `stacks.folded`: sampled stacks for flamegraph tooling.
+* `profile.prof`: generated only when `--cprofile` is used.
 
-To fix this the most stable, non hacky approach is to downgrade to an earlier build of python, such as 3.13.x or 3.12.x whilst using the latest Sounddevice install.
+Useful report sections include paint cadence, audio queue drain timing, module audio time, worker-thread time, and ghost-titlebar update time.
 
-Fixes are available, but modifying sounddevice.py is at your own expense.
+---
 
-It is also worth noting that some AVs might flag the .exe as malicious. Don't worry this is a known pyinstaller/nuitka (or other compilers) issue when dealing with onefile/standalones executables. You can inspect the code and if you are that paranoid then feel free to build it yourself from "scratch" (maturin + compiler)
+## Shortcuts & Workflow
 
-✝: Unfortunately I cannot test the linux build myself, if it does not work, please feel free to submit a PR/Open an issue on the github page.
+* **Right-click**: Open module-specific settings.
+* **Gear icon**: Device selection, themes, input gain, and label scaling.
+* **Plus icon**: Add a module.
+* **Layout icon**: Switch between vertical and horizontal layouts.
+* **Move mode**: Rearrange modules without fighting splitter handles.
+* **Portability**: Settings are stored in the app data directory, with source-run `settings.json` ignored by git.
 
-## 📜 License
+---
+
+## Development & Testing
+
+```bash
+python -m pytest --basetemp profile_logs/pytest_tmp
+```
+
+The explicit `--basetemp` keeps pytest's temporary files inside the workspace on locked-down Windows environments.
+
+---
+
+## Known Issues
+
+* Python 3.14 plus SoundDevice/CFFI can soft-crash after extended silence on some systems. PyDSPMeters includes a keep-alive workaround, but Python 3.13 or 3.12 may be more stable.
+* Onefile executables built with PyInstaller/Nuitka can trigger antivirus false positives. Build from source if you want to inspect the full chain yourself.
+* Linux support is community-tested. PRs and issue reports are welcome.
+
+---
+
+## License
+
 Licensed under the [MIT License](LICENSE). Build, modify, and share.

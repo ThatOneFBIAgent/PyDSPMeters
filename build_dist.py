@@ -2,6 +2,7 @@ import os
 import sys
 import subprocess
 import shutil
+import argparse
 
 # --- ANSI Colors for Polished CMD Output ---
 class Colors:
@@ -26,7 +27,12 @@ def print_warning(msg):
 def print_error(msg):
     print(f"{Colors.FAIL}✗ {msg}{Colors.ENDC}")
 
-def find_icon():
+def find_icon(preferred_path=None, assume_yes=False):
+    if preferred_path:
+        if os.path.exists(preferred_path):
+            return os.path.abspath(preferred_path)
+        print_warning(f"Requested icon was not found: {preferred_path}")
+
     # Only search known safe directories rather than entire tree
     search_dirs = [".", "app", "assets"]
     for d in search_dirs:
@@ -34,6 +40,8 @@ def find_icon():
         for file in os.listdir(d):
             if file.endswith(".ico"):
                 icon_path = os.path.join(d, file)
+                if assume_yes:
+                    return os.path.abspath(icon_path)
                 choice = input(f"{Colors.OKCYAN}? Found icon '{icon_path}'. Use this for the executable? (y/n): {Colors.ENDC}").strip().lower()
                 if choice == 'y':
                     return os.path.abspath(icon_path)
@@ -84,6 +92,7 @@ def build_nuitka(entry_point, icon_path):
         "--nofollow-import-to=PySide6.QtSvgWidgets",
         "--windows-console-mode=disable",
         "--include-package=app",
+        "--include-package=dsp_accel",
         "--follow-imports",
         "--output-filename=PyDSPMeters.exe" if sys.platform == "win32" else "--output-filename=PyDSPMeters",
         "--output-dir=dist",
@@ -120,6 +129,9 @@ def build_pyinstaller(entry_point, icon_path):
         "--workpath=build",
         "--clean",
         "--hidden-import=app",
+        "--hidden-import=dsp_accel",
+        "--hidden-import=dsp_accel.dsp_accel",
+        "--collect-submodules=dsp_accel",
     ]
     if icon_path:
         cmd.append(f"--icon={icon_path}")
@@ -144,6 +156,21 @@ def build_pyinstaller(entry_point, icon_path):
         if os.path.exists("build"):
             shutil.rmtree("build", ignore_errors=True)
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Build PyDSPMeters distribution artifacts.")
+    parser.add_argument(
+        "--icon",
+        default=APP_ICON_NAME if "APP_ICON_NAME" in globals() else "icon.ico",
+        help="Icon file to use for the executable. Use an empty value to auto-detect.",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Use the first discovered icon without prompting.",
+    )
+    return parser.parse_args()
+
+
 def build():
     # Enable ANSI colors on Windows CMD
     if sys.platform == "win32":
@@ -158,7 +185,8 @@ def build():
         print_error(f"Could not find entry point: {entry_point}")
         sys.exit(1)
 
-    icon_path = find_icon()
+    args = parse_args()
+    icon_path = find_icon(args.icon or None, assume_yes=args.yes)
     if icon_path:
         print_success(f"Using icon: {icon_path}")
     else:

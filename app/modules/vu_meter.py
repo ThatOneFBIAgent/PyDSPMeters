@@ -25,7 +25,7 @@ class VUMeterModule(BaseModule):
         self._clip_lit_l = False
         self._clip_lit_r = False
         self._peak_threshold = -6.0
-        self._clip_threshold = -0.5
+        self._clip_threshold = 0.0
         self._cal_offset = 0.0
         self._channel = "L+R" if audio_engine.channels >= 2 else "Left"
         self._style = 0
@@ -124,13 +124,13 @@ class VUMeterModule(BaseModule):
             else:
                 self._peak_hold_r -= self._peak_hold_decay
             
-            # Peak/Clip
+            # Peak LEDs use instantaneous sample peaks; clip follows the displayed VU level.
             peak_l = 20.0 * np.log10(max(np.max(np.abs(l)), 1e-10)) + self._cal_offset
             peak_r = 20.0 * np.log10(max(np.max(np.abs(r)), 1e-10)) + self._cal_offset
             self._peak_lit_l = peak_l > self._peak_threshold
             self._peak_lit_r = peak_r > self._peak_threshold
-            self._clip_lit_l = peak_l > self._clip_threshold
-            self._clip_lit_r = peak_r > self._clip_threshold
+            self._clip_lit_l = self._needle_l >= self._clip_threshold
+            self._clip_lit_r = self._needle_r >= self._clip_threshold
         else:
             sig = {"Left": l, "Right": r, "Mid": (l+r)*0.5, "Side": (l-r)*0.5}.get(self._channel, l)
             rms = np.sqrt(np.mean(sig ** 2))
@@ -149,7 +149,7 @@ class VUMeterModule(BaseModule):
             
             peak = 20.0 * np.log10(max(np.max(np.abs(sig)), 1e-10)) + self._cal_offset
             self._peak_lit_l = self._peak_lit_r = peak > self._peak_threshold
-            self._clip_lit_l = self._clip_lit_r = peak > self._clip_threshold
+            self._clip_lit_l = self._clip_lit_r = self._needle_l >= self._clip_threshold
 
     def _render(self, painter, w, h):
         if self._style == 2:

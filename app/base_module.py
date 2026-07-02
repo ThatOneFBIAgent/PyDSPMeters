@@ -3,6 +3,9 @@ Base class for all visualization modules.
 Provides a collapsible settings panel, header bar, and audio data hookup.
 """
 
+import time
+import traceback
+
 import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -12,6 +15,8 @@ from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, 
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QIcon, QFontMetrics
 
 from app.theme import Colors, Fonts
+from app.utils import dsp_executor
+from app.utils import perf_stats
 
 
 class ModuleHeader(QFrame):
@@ -89,6 +94,9 @@ class RenderCanvas(QWidget):
         painter = QPainter(self)
         if not painter.isActive():
             return
+        started = time.perf_counter()
+        parent = self.parent()
+        module_name = getattr(parent, "module_key", parent.__class__.__name__ if parent else "unknown")
         painter.setRenderHint(QPainter.Antialiasing, self._antialiasing)
         
         painter.fillRect(self.rect(), QColor(Colors.BG_MODULE))
@@ -158,6 +166,8 @@ class RenderCanvas(QWidget):
                 painter.setFont(BaseModule.get_responsive_font(Fonts.header, center_w, center_h, msg))
                 painter.drawText(self.rect(), Qt.AlignCenter, msg)
             
+        perf_stats.record_timing(f"paint.{module_name}", time.perf_counter() - started)
+        perf_stats.record_interval(f"paint_interval.{module_name}")
         painter.end()
 
     def mousePressEvent(self, event):
@@ -193,6 +203,7 @@ class BaseModule(QWidget):
     close_requested = Signal(object)  # emits self
     move_requested = Signal(object, int)  # emits self, direction (-1 or 1)
     move_mode_exit_requested = Signal()
+    _async_audio_result_ready = Signal(int, object, object, float)
 
     def __init__(self, audio_engine, title: str = "Module", parent=None):
         super().__init__(parent)
@@ -218,6 +229,12 @@ class BaseModule(QWidget):
         self._render_pending = False
         self._last_render_update = QElapsedTimer()
         self._last_render_update.start()
+        self._async_audio_enabled = False
+        self._async_audio_in_flight = False
+        self._async_audio_pending_data = None
+        self._async_audio_seq = 0
+        self._async_audio_closed = False
+        self._async_audio_result_ready.connect(self._handle_async_audio_result)
 
     def update_theme(self):
         self.setStyleSheet(f"#baseModule {{ background: {Colors.BG_DARK}; border: 1px solid {Colors.BORDER}; border-radius: 4px; }}")
@@ -384,8 +401,93 @@ class BaseModule(QWidget):
         """
         pass
 
+    def set_async_audio_processing(self, enabled: bool):
+        """Enable latest-only worker-thread processing for this module."""
+        self._async_audio_enabled = bool(enabled)
+
+    def process_audio_data(self, data: np.ndarray):
+        """
+        Override for worker-thread audio processing.
+        Must not touch Qt objects. Return render-ready state for apply_audio_result().
+        """
+        return None
+
+    def apply_audio_result(self, result):
+        """Override to apply worker results on the main thread."""
+        pass
+
     def _handle_audio_data(self, data: np.ndarray):
-        self.on_audio_data(data)
+        if self._async_audio_enabled:
+            self._queue_async_audio_data(data)
+            return
+
+        started = time.perf_counter()
+        try:
+            self.on_audio_data(data)
+        finally:
+            module_name = getattr(self, "module_key", self.__class__.__name__)
+            perf_stats.record_timing(f"module_audio.{module_name}", time.perf_counter() - started)
+        self._request_render_update()
+
+    def _queue_async_audio_data(self, data: np.ndarray):
+        if self._async_audio_closed:
+            return
+
+        self._async_audio_pending_data = data
+        if not self._async_audio_in_flight:
+            self._start_next_async_audio_job()
+
+    def _start_next_async_audio_job(self):
+        data = self._async_audio_pending_data
+        self._async_audio_pending_data = None
+        if data is None or self._async_audio_closed:
+            return
+
+        self._async_audio_in_flight = True
+        self._async_audio_seq += 1
+        seq = self._async_audio_seq
+        future = dsp_executor.submit(self._run_async_audio_job, seq, data)
+        future.add_done_callback(self._emit_async_audio_result)
+
+    def _run_async_audio_job(self, seq: int, data: np.ndarray):
+        started = time.perf_counter()
+        result = self.process_audio_data(data)
+        return seq, result, time.perf_counter() - started
+
+    def _emit_async_audio_result(self, future):
+        try:
+            seq, result, elapsed = future.result()
+            error = None
+        except Exception as exc:
+            seq = self._async_audio_seq
+            result = None
+            elapsed = 0.0
+            error = exc
+
+        if not self._async_audio_closed:
+            self._async_audio_result_ready.emit(seq, result, error, elapsed)
+
+    def _handle_async_audio_result(self, seq: int, result, error, elapsed: float):
+        self._async_audio_in_flight = False
+        module_name = getattr(self, "module_key", self.__class__.__name__)
+        perf_stats.record_timing(f"module_audio_worker.{module_name}", elapsed)
+
+        if error is not None:
+            print(f"[{self._title}] async audio processing failed:")
+            traceback.print_exception(type(error), error, error.__traceback__)
+        elif not self._async_audio_closed:
+            started = time.perf_counter()
+            self.apply_audio_result(result)
+            perf_stats.record_timing(
+                f"module_audio_apply.{module_name}",
+                time.perf_counter() - started,
+            )
+            self._request_render_update()
+
+        if self._async_audio_pending_data is not None:
+            self._start_next_async_audio_job()
+
+    def _request_render_update(self):
         elapsed = self._last_render_update.elapsed()
         if elapsed >= self._render_interval_ms:
             self._flush_render_update()
@@ -412,6 +514,9 @@ class BaseModule(QWidget):
 
     def cleanup(self):
         """Called when the module is being removed."""
+        self._async_audio_closed = True
+        self._async_audio_enabled = False
+        self._async_audio_pending_data = None
         try:
             self.audio_engine.data_ready.disconnect(self._handle_audio_data)
         except RuntimeError:
