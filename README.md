@@ -94,16 +94,16 @@ pythonw "path/to/main.pyw"
 
 ## Building A Standalone Executable
 
-The build helper prefers Nuitka when available and falls back to PyInstaller:
+The build helper uses PyInstaller, includes `icon.ico` when available, streams colored build logs, and includes the Rust accelerator when it is installed:
 
 ```bash
 python build_dist.py --yes
 ```
 
-For a direct PyInstaller build that includes the executable icon, runtime icon file, and Rust accelerator:
+If `dist/PyDSPMeters.exe` is locked because the previous build is still running, the helper automatically writes a timestamped executable beside it instead of failing late in the build. To fail immediately on a locked output file:
 
 ```powershell
-python -m PyInstaller --noconfirm --onefile --windowed --name=PyDSPMeters --distpath=dist --workpath=build --clean --hidden-import=app --hidden-import=dsp_accel --hidden-import=dsp_accel.dsp_accel --collect-submodules=dsp_accel --icon=icon.ico --add-data "icon.ico;." main.pyw
+python build_dist.py --yes --locked-output fail
 ```
 
 The output will be written to:

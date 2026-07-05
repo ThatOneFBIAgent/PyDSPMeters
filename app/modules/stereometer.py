@@ -23,6 +23,9 @@ class StereometerModule(BaseModule):
         self._corr_mode = "Single-Band"
         self._guide_mode = "Rhombus"
         self._zoom = 1.0
+        self._auto_zoom = True
+        self._auto_zoom_value = 1.0
+        self._trace_style = "Persistence"
         self._show_labels = True
         self._halved_view = False
         self._minimal_mode = False
@@ -35,6 +38,8 @@ class StereometerModule(BaseModule):
         self._window_alpha = 0.1 
         self._window_cache = {}
         self._buffer = None
+        self._scope_pixmap = None
+        self._scope_pixmap_key = None
         
         self._left = np.zeros(1024, dtype=np.float32)
         self._right = np.zeros(1024, dtype=np.float32)
@@ -54,6 +59,8 @@ class StereometerModule(BaseModule):
             "corr_mode": self._corr_mode,
             "guide_mode": self._guide_mode,
             "zoom": self._zoom,
+            "auto_zoom": self._auto_zoom,
+            "trace_style": self._trace_style,
             "width_gain": self._width_gain,
             "persistence": self._persistence,
             "max_dots": self._max_dots,
@@ -68,6 +75,7 @@ class StereometerModule(BaseModule):
     _VALID_COLOR_MODES = {"Static", "Multi-Band", "Multi-Band (RGB)"}
     _VALID_CORR_MODES = {"Single-Band", "Multi-Band"}
     _VALID_GUIDE_MODES = {"None", "Rhombus", "Circle", "Square"}
+    _VALID_TRACE_STYLES = {"Persistence", "Instant"}
 
     def apply_settings(self, settings):
         dm = settings.get("display_mode", self._display_mode)
@@ -79,6 +87,9 @@ class StereometerModule(BaseModule):
         gm = settings.get("guide_mode", self._guide_mode)
         self._guide_mode = gm if gm in self._VALID_GUIDE_MODES else "Rhombus"
         self._zoom = float(settings.get("zoom", self._zoom))
+        self._auto_zoom = bool(settings.get("auto_zoom", self._auto_zoom))
+        ts = settings.get("trace_style", self._trace_style)
+        self._trace_style = ts if ts in self._VALID_TRACE_STYLES else "Persistence"
         self._width_gain = float(settings.get("width_gain", self._width_gain))
         self._persistence = float(settings.get("persistence", self._persistence))
         self._max_dots = int(settings.get("max_dots", self._max_dots))
@@ -123,12 +134,26 @@ class StereometerModule(BaseModule):
 
         zm = menu.addMenu("Zoom")
         zg = QActionGroup(self)
+        auto_zoom = zm.addAction("Auto")
+        auto_zoom.setCheckable(True)
+        auto_zoom.setChecked(self._auto_zoom)
+        auto_zoom.triggered.connect(lambda checked: self._set_auto_zoom(checked))
+        zg.addAction(auto_zoom)
         for z in [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0]:
             a = zm.addAction(f"{z}x")
             a.setCheckable(True)
-            a.setChecked(abs(z - self._zoom) < 0.01)
-            a.triggered.connect(lambda checked, v=z: (setattr(self, "_zoom", v), self.canvas.update()))
+            a.setChecked(not self._auto_zoom and abs(z - self._zoom) < 0.01)
+            a.triggered.connect(lambda checked, v=z: self._set_manual_zoom(v))
             zg.addAction(a)
+
+        tm = menu.addMenu("Trace Style")
+        tg = QActionGroup(self)
+        for style in ["Persistence", "Instant"]:
+            a = tm.addAction(style)
+            a.setCheckable(True)
+            a.setChecked(style == self._trace_style)
+            a.triggered.connect(lambda checked, v=style: self._set_trace_style(v))
+            tg.addAction(a)
 
         wm = menu.addMenu("Width Gain")
         wg = QActionGroup(self)
@@ -202,6 +227,26 @@ class StereometerModule(BaseModule):
         a.setChecked(self._halved_view)
         a.triggered.connect(lambda checked: (setattr(self, "_halved_view", checked), self.canvas.update()))
 
+    def _set_auto_zoom(self, enabled):
+        self._auto_zoom = bool(enabled)
+        self._clear_scope_persistence()
+        self.canvas.update()
+
+    def _set_manual_zoom(self, value):
+        self._auto_zoom = False
+        self._zoom = float(value)
+        self._clear_scope_persistence()
+        self.canvas.update()
+
+    def _set_trace_style(self, style):
+        self._trace_style = style if style in self._VALID_TRACE_STYLES else "Persistence"
+        self._clear_scope_persistence()
+        self.canvas.update()
+
+    def _clear_scope_persistence(self):
+        self._scope_pixmap = None
+        self._scope_pixmap_key = None
+
     def on_audio_data(self, data: np.ndarray):
         n = len(data)
         l_raw = data[:, 0].copy()
@@ -227,6 +272,8 @@ class StereometerModule(BaseModule):
             
         self._left = (l_proc * win)
         self._right = (r_proc * win)
+        if self._auto_zoom:
+            self._update_auto_zoom(self._left, self._right)
         
         # 3. Smoothed Correlation
         new_corr = correlation(l_raw, r_raw)
@@ -249,6 +296,37 @@ class StereometerModule(BaseModule):
                 self._mb_corr[k] = old * (1.0 - alpha) + new_mb[k] * alpha
                 old_g = self._mb_corr_ghost.get(k, self._mb_corr[k])
                 self._mb_corr_ghost[k] = old_g * 0.92 + self._mb_corr[k] * 0.08
+
+    def _update_auto_zoom(self, left, right):
+        if len(left) < 2:
+            return
+
+        if self._display_mode == "Vectorscope":
+            dx = (left - right) * 0.5
+            dy = (left + right) * 0.5
+        else:
+            dx = right
+            dy = left
+
+        if self._guide_mode == "Circle":
+            magnitude = np.sqrt(dx * dx + dy * dy)
+        elif self._guide_mode == "Square":
+            magnitude = np.maximum(np.abs(dx), np.abs(dy))
+        else:
+            magnitude = np.abs(dx) + np.abs(dy)
+
+        peak = float(np.percentile(magnitude, 99.0)) if len(magnitude) > 64 else float(np.max(magnitude))
+        if peak < 0.0005:
+            target = 1.0
+        else:
+            target = 0.82 / peak
+            target = max(0.35, min(12.0, target))
+
+        alpha = 0.35 if target < self._auto_zoom_value else 0.12
+        self._auto_zoom_value += (target - self._auto_zoom_value) * alpha
+
+    def _effective_zoom(self):
+        return self._auto_zoom_value if self._auto_zoom else self._zoom
 
     def _render(self, painter, w, h):
         corr_size = 28 if not self._minimal_mode else 0
@@ -285,6 +363,11 @@ class StereometerModule(BaseModule):
             cy = sy_off + sh / 2
             radius = min(sw / 2 - margin, sh / 2 - margin)
 
+        if self._trace_style == "Persistence":
+            self._render_persistent_scope(w, h, scope_rect, cx, cy, radius)
+            if self._scope_pixmap:
+                painter.drawPixmap(0, 0, self._scope_pixmap)
+
         # Rotation / Transformation block
         painter.save()
         if self._rotation != 0 and not self._halved_view:
@@ -292,41 +375,9 @@ class StereometerModule(BaseModule):
             painter.rotate(self._rotation)
             painter.translate(-cx, -cy)
 
-        # 1. Base Grid / Crosshair
-        painter.setPen(QPen(QColor(Colors.GRID), 0.5))
-        painter.drawLine(int(cx), int(cy - radius), int(cx), int(cy + radius))
-        painter.drawLine(int(cx - radius), int(cy), int(cx + radius), int(cy))
-
-        # 2. Guide Maps
-        painter.setPen(QPen(QColor(Colors.GRID), 1))
-        if self._guide_mode == "Rhombus":
-            if self._halved_view:
-                painter.drawPolygon([QPointF(cx-radius, cy), QPointF(cx, cy-radius), QPointF(cx+radius, cy)])
-            else:
-                painter.drawPolygon([QPointF(cx, cy-radius), QPointF(cx+radius, cy), QPointF(cx, cy+radius), QPointF(cx-radius, cy)])
-        elif self._guide_mode == "Circle":
-            if self._halved_view:
-                painter.drawArc(int(cx-radius), int(cy-radius), int(radius*2), int(radius*2), 0, 180 * 16)
-                painter.drawLine(int(cx-radius), int(cy), int(cx+radius), int(cy))
-            else:
-                painter.drawEllipse(QPointF(cx, cy), radius, radius)
-        elif self._guide_mode == "Square":
-            if self._halved_view:
-                painter.drawPolyline([QPointF(cx-radius, cy), QPointF(cx-radius, cy-radius), QPointF(cx+radius, cy-radius), QPointF(cx+radius, cy)])
-            else:
-                painter.drawRect(QRectF(cx - radius, cy - radius, radius * 2, radius * 2))
-
-        # 3. Trace (Drawn directly, no persistence)
-        left, right = self._left, self._right
-        if self._color_mode.startswith("Multi-Band"):
-            low_l, mid_l, high_l = self._multiband.split(left)
-            low_r, mid_r, high_r = self._multiband.split(right)
-            cols = ["#FF3333", "#33FF33", "#3388FF"] if self._color_mode == "Multi-Band (RGB)" else [Colors.BAND_LOW, Colors.BAND_MID, Colors.BAND_HIGH]
-            for bl, br, col in zip([low_l, mid_l, high_l], [low_r, mid_r, high_r], cols):
-                self._draw_trace(painter, bl, br, cx, cy, radius, QColor(col), 160)
-        else:
-            col = QColor(Colors.ACCENT)
-            self._draw_trace(painter, left, right, cx, cy, radius, col, 200)
+        self._draw_scope_guides(painter, cx, cy, radius)
+        if self._trace_style == "Instant":
+            self._draw_scope_traces(painter, self._left, self._right, cx, cy, radius)
 
         painter.restore()
 
@@ -451,12 +502,82 @@ class StereometerModule(BaseModule):
                 painter.drawText(QRectF(bx, bar_rect.y() + bh, 20, 14), Qt.AlignLeft, "-1")
                 painter.drawText(QRectF(bx + bw - 20, bar_rect.y() + bh, 20, 14), Qt.AlignRight, "-1")
 
+    def _draw_scope_guides(self, painter, cx, cy, radius):
+        painter.setPen(QPen(QColor(Colors.GRID), 0.5))
+        painter.drawLine(int(cx), int(cy - radius), int(cx), int(cy + radius))
+        painter.drawLine(int(cx - radius), int(cy), int(cx + radius), int(cy))
+
+        painter.setPen(QPen(QColor(Colors.GRID), 1))
+        if self._guide_mode == "Rhombus":
+            if self._halved_view:
+                painter.drawPolygon([QPointF(cx-radius, cy), QPointF(cx, cy-radius), QPointF(cx+radius, cy)])
+            else:
+                painter.drawPolygon([QPointF(cx, cy-radius), QPointF(cx+radius, cy), QPointF(cx, cy+radius), QPointF(cx-radius, cy)])
+        elif self._guide_mode == "Circle":
+            if self._halved_view:
+                painter.drawArc(int(cx-radius), int(cy-radius), int(radius*2), int(radius*2), 0, 180 * 16)
+                painter.drawLine(int(cx-radius), int(cy), int(cx+radius), int(cy))
+            else:
+                painter.drawEllipse(QPointF(cx, cy), radius, radius)
+        elif self._guide_mode == "Square":
+            if self._halved_view:
+                painter.drawPolyline([QPointF(cx-radius, cy), QPointF(cx-radius, cy-radius), QPointF(cx+radius, cy-radius), QPointF(cx+radius, cy)])
+            else:
+                painter.drawRect(QRectF(cx - radius, cy - radius, radius * 2, radius * 2))
+
+    def _draw_scope_traces(self, painter, left, right, cx, cy, radius):
+        if self._color_mode.startswith("Multi-Band"):
+            low_l, mid_l, high_l = self._multiband.split(left)
+            low_r, mid_r, high_r = self._multiband.split(right)
+            cols = ["#FF3333", "#33FF33", "#3388FF"] if self._color_mode == "Multi-Band (RGB)" else [Colors.BAND_LOW, Colors.BAND_MID, Colors.BAND_HIGH]
+            for bl, br, col in zip([low_l, mid_l, high_l], [low_r, mid_r, high_r], cols):
+                self._draw_trace(painter, bl, br, cx, cy, radius, QColor(col), 160)
+        else:
+            self._draw_trace(painter, left, right, cx, cy, radius, QColor(Colors.ACCENT), 200)
+
+    def _render_persistent_scope(self, w, h, scope_rect, cx, cy, radius):
+        key = (
+            int(w),
+            int(h),
+            int(scope_rect.x()),
+            int(scope_rect.y()),
+            int(scope_rect.width()),
+            int(scope_rect.height()),
+            int(radius),
+            self._display_mode,
+            self._guide_mode,
+            self._halved_view,
+            self._rotation,
+        )
+        if self._scope_pixmap is None or self._scope_pixmap_key != key:
+            self._scope_pixmap = QPixmap(w, h)
+            self._scope_pixmap.fill(Qt.transparent)
+            self._scope_pixmap_key = key
+
+        p = QPainter(self._scope_pixmap)
+        if not p.isActive():
+            return
+        p.setRenderHint(QPainter.Antialiasing, False)
+        fade_alpha = 56 if self._color_mode.startswith("Multi-Band") else 44
+        fade_color = QColor(Colors.BG_MODULE)
+        fade_color.setAlpha(fade_alpha)
+        p.fillRect(scope_rect, fade_color)
+        p.save()
+        if self._rotation != 0 and not self._halved_view:
+            p.translate(cx, cy)
+            p.rotate(self._rotation)
+            p.translate(-cx, -cy)
+        self._draw_scope_traces(p, self._left, self._right, cx, cy, radius)
+        p.restore()
+        p.end()
+
     def _draw_trace(self, painter, left, right, cx, cy, radius, color, alpha):
         n = len(left)
         step = max(1, n // self._max_dots)
         
-        l_seg = left[::step] * self._zoom
-        r_seg = right[::step] * self._zoom
+        zoom = self._effective_zoom()
+        l_seg = left[::step] * zoom
+        r_seg = right[::step] * zoom
 
         painter.save()
         painter.setOpacity(alpha / 255.0)
@@ -503,8 +624,8 @@ class StereometerModule(BaseModule):
             
         else:
             # 2. Lissajous (Polyline) - Shows Phase Curves
-            dx = right[::step] * self._zoom
-            dy = left[::step] * self._zoom
+            dx = right[::step] * zoom
+            dy = left[::step] * zoom
             
             # Limiting to Guide Map (Default to Rhombus even if None)
             if self._guide_mode == "Circle":

@@ -4,7 +4,7 @@ Spectrogram Module: Scrolling time-frequency display (numpy-accelerated).
 
 import numpy as np
 from PySide6.QtGui import QPainter, QColor, QImage, QPen
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import Qt, QRect, QRectF
 
 from app.base_module import BaseModule
 from app.modules import register_module
@@ -40,6 +40,11 @@ class SpectrogramModule(BaseModule):
         self._buffer_data = np.zeros((self._display_h, self._history_len, 3), dtype=np.uint8)
         self._buffer_img = QImage(self._buffer_data.data, self._history_len, self._display_h,
                                   self._history_len * 3, QImage.Format_RGB888)
+        self._ordered_data = None
+        self._ordered_img = None
+        self._vertical_data = None
+        self._vertical_img = None
+        self._image_cache_idx = -1
         self.module_key = "spectrogram"
         super().__init__(audio_engine, title="Spectrogram", parent=parent)
         self.canvas.set_render_func(self._render)
@@ -69,6 +74,7 @@ class SpectrogramModule(BaseModule):
                 self._history, self._lut, self._buffer_data,
                 0, self._history_len, self._history_len
             )
+            self._invalidate_image_cache()
         except (IndexError, ValueError):
             pass  # Shape mismatch during transition — safe to ignore
 
@@ -77,8 +83,49 @@ class SpectrogramModule(BaseModule):
         self._buffer_data = np.zeros((self._display_h, self._history_len, 3), dtype=np.uint8)
         self._buffer_img = QImage(self._buffer_data.data, self._history_len, self._display_h,
                                   self._history_len * 3, QImage.Format_RGB888)
+        self._invalidate_image_cache()
         # Re-apply history data to buffer
         self._recolor_buffer()
+
+    def _invalidate_image_cache(self):
+        self._ordered_data = None
+        self._ordered_img = None
+        self._vertical_data = None
+        self._vertical_img = None
+        self._image_cache_idx = -1
+
+    def _rebuild_render_images(self):
+        head = self._col_idx % self._history_len
+        if head == 0:
+            ordered = np.ascontiguousarray(self._buffer_data)
+        else:
+            ordered = np.ascontiguousarray(
+                np.concatenate((self._buffer_data[:, head:], self._buffer_data[:, :head]), axis=1)
+            )
+
+        vertical = np.ascontiguousarray(np.rot90(ordered, k=3))
+
+        self._ordered_data = ordered
+        self._ordered_img = QImage(
+            self._ordered_data.data,
+            self._history_len,
+            self._display_h,
+            self._history_len * 3,
+            QImage.Format_RGB888,
+        )
+        self._vertical_data = vertical
+        self._vertical_img = QImage(
+            self._vertical_data.data,
+            self._display_h,
+            self._history_len,
+            self._display_h * 3,
+            QImage.Format_RGB888,
+        )
+        self._image_cache_idx = self._col_idx
+
+    def _ensure_render_images(self):
+        if self._image_cache_idx != self._col_idx or self._ordered_img is None or self._vertical_img is None:
+            self._rebuild_render_images()
 
     def get_settings(self):
         return {
@@ -268,17 +315,15 @@ class SpectrogramModule(BaseModule):
             
             self._last_rendered_idx = self._col_idx
         
-        # Draw circular segments
-        head = self._col_idx % self._history_len
-        from PySide6.QtCore import QRect
-        
-        len_1 = self._history_len - head
-        w_1 = int(w * (len_1 / self._history_len))
-        
+        # Draw ordered spectrogram image
+        self._ensure_render_images()
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
         if self._orientation == "Horizontal":
-            painter.drawImage(QRect(0, 0, w_1, h), self._buffer_img, QRect(head, 0, len_1, self._display_h))
-            painter.drawImage(QRect(w_1, 0, w - w_1, h), self._buffer_img, QRect(0, 0, head, self._display_h))
+            painter.drawImage(QRect(0, 0, w, h), self._ordered_img)
         else:
+            painter.drawImage(QRect(0, 0, w, h), self._vertical_img)
+        if False:
             # Vertical mode: manually blit rotated by drawing column strips
             # More efficient than QTransform().rotate(90) per frame
             total_cols = self._history_len
@@ -313,6 +358,24 @@ class SpectrogramModule(BaseModule):
                         tw = fm.horizontalAdvance(lb) + 12
                         painter.setFont(self.get_responsive_font(Fonts.small, tw, 12, lb))
                         self.draw_text_badge(painter, QRectF(6, fy - 10, tw, 12), Qt.AlignLeft, lb, QColor(255, 255, 255, 150))
+                else:
+                    fx = map_frequencies_to_pixels(np.array([gf]), w, self._scale)[0]
+                    if 0 < fx < w:
+                        painter.setPen(QPen(QColor(255, 255, 255, 38), 1))
+                        painter.drawLine(int(fx), 0, int(fx), h)
+                        if h > 36 and w > 120:
+                            lb = f"{gf}" if gf < 1000 else f"{gf // 1000}k"
+                            from PySide6.QtGui import QFontMetrics
+                            fm = QFontMetrics(Fonts.small())
+                            tw = fm.horizontalAdvance(lb) + 12
+                            painter.setFont(self.get_responsive_font(Fonts.small, tw, 12, lb))
+                            self.draw_text_badge(
+                                painter,
+                                QRectF(fx - tw / 2, h - 16, tw, 12),
+                                Qt.AlignCenter,
+                                lb,
+                                QColor(255, 255, 255, 145),
+                            )
 
         if self._show_piano:
             self._draw_piano(painter, w, h)
@@ -325,9 +388,14 @@ class SpectrogramModule(BaseModule):
                 freq = 440.0 * 2 ** ((octave - 4) + (ni - 9) / 12.0)
                 if freq < 20 or freq > 20000:
                     continue
-                fy = h - map_frequencies_to_pixels(
-                    np.array([freq]), h, self._scale)[0]
-                if 0 < fy < h:
-                    col = QColor(0, 0, 0, 100) if ni in black else QColor(255, 255, 255, 60)
-                    painter.setPen(QPen(col, 1))
-                    painter.drawLine(w - 20, int(fy), w, int(fy))
+                col = QColor(0, 0, 0, 100) if ni in black else QColor(255, 255, 255, 60)
+                painter.setPen(QPen(col, 1))
+                if self._orientation == "Horizontal":
+                    fy = h - map_frequencies_to_pixels(
+                        np.array([freq]), h, self._scale)[0]
+                    if 0 < fy < h:
+                        painter.drawLine(w - 20, int(fy), w, int(fy))
+                else:
+                    fx = map_frequencies_to_pixels(np.array([freq]), w, self._scale)[0]
+                    if 0 < fx < w:
+                        painter.drawLine(int(fx), 0, int(fx), min(20, h))

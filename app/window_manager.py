@@ -421,6 +421,19 @@ class MainWindow(QMainWindow):
         self._appbar_edge = win_s.get("appbar_edge", "right")
         self._appbar_saved = win_s.get("appbar_active", False)
         self._appbar_active = False # Will be restored in finish_loading
+        self._appbar_registered_hwnd = None
+        self._appbar_callback_msg = 0
+        self._appbar_taskbar_msg = 0
+        self._appbar_repair_pending = False
+        self._appbar_repair_force = False
+        self._appbar_applying = False
+        self._appbar_fullscreen_active = False
+        self._appbar_health_failures = 0
+        self._appbar_last_rect = None
+        self._appbar_deep_repair_pending = False
+        self._appbar_watchdog_timer = QTimer(self)
+        self._appbar_watchdog_timer.setInterval(30000)
+        self._appbar_watchdog_timer.timeout.connect(self._verify_appbar)
         self._loading_settings = True
         self._is_ready = False
         self._ghost_hover_ready = False
@@ -667,6 +680,9 @@ class MainWindow(QMainWindow):
         toggle_act.setCheckable(True)
         toggle_act.setChecked(self._appbar_active)
         toggle_act.triggered.connect(self._toggle_appbar)
+        repair_act = appbar_menu.addAction("Repair App Bar")
+        repair_act.setEnabled(self._appbar_active)
+        repair_act.triggered.connect(self._manual_repair_appbar)
         
         appbar_menu.addSeparator()
         edge_group = QActionGroup(self)
@@ -738,6 +754,7 @@ class MainWindow(QMainWindow):
 
         if getattr(self, "_appbar_active", False):
             self._appbar_active = False
+            self._stop_appbar_watchdog()
             self._release_appbar()
 
         self._settings = settings
@@ -1011,18 +1028,196 @@ class MainWindow(QMainWindow):
 
     # ── App Bar ──────────────────────────────────────────────────────────────
 
+    def nativeEvent(self, event_type, message):
+        import sys
+        if sys.platform != "win32":
+            return False, 0
+        if getattr(self, "_appbar_applying", False):
+            return False, 0
+        try:
+            import ctypes.wintypes as wt
+
+            msg = wt.MSG.from_address(int(message))
+            WM_SETTINGCHANGE = 0x001A
+            WM_DISPLAYCHANGE = 0x007E
+            if self._appbar_taskbar_msg and msg.message == self._appbar_taskbar_msg:
+                self._schedule_appbar_repair(delay=1000, force_register=True)
+            elif self._appbar_callback_msg and msg.message == self._appbar_callback_msg:
+                self._handle_appbar_callback(int(msg.wParam), int(msg.lParam))
+            elif (
+                getattr(self, "_appbar_active", False)
+                and not getattr(self, "_appbar_fullscreen_active", False)
+                and msg.message in (WM_SETTINGCHANGE, WM_DISPLAYCHANGE)
+            ):
+                self._schedule_appbar_repair(delay=1200, force_register=True)
+        except Exception:
+            return False, 0
+        return False, 0
+
+    def _handle_appbar_callback(self, notification, value):
+        ABN_STATECHANGE = 0
+        ABN_POSCHANGED = 1
+        ABN_FULLSCREENAPP = 2
+        ABN_WINDOWARRANGE = 3
+
+        if notification == ABN_FULLSCREENAPP:
+            fullscreen_active = bool(value)
+            self._appbar_fullscreen_active = fullscreen_active
+            self._set_appbar_topmost(not fullscreen_active)
+            if fullscreen_active:
+                return
+            self._schedule_appbar_repair(delay=1200, force_register=True)
+            return
+
+        if notification == ABN_POSCHANGED:
+            self._schedule_appbar_repair(delay=250, force_register=False)
+        elif notification in (ABN_STATECHANGE, ABN_WINDOWARRANGE):
+            self._schedule_appbar_repair(delay=700, force_register=False)
+
     def _toggle_appbar(self, checked, delay=100):
         self._appbar_active = checked
         if checked:
+            self._start_appbar_watchdog()
             # Need a slight delay to ensure window is mapped and geometry is stable
             if delay > 0:
                 QTimer.singleShot(delay, self._apply_appbar)
             else:
                 self._apply_appbar()
         else:
+            self._stop_appbar_watchdog()
             self._release_appbar()
             
         self._update_appbar_ui()
+
+    def _start_appbar_watchdog(self):
+        if not self._appbar_watchdog_timer.isActive():
+            self._appbar_watchdog_timer.start()
+
+    def _stop_appbar_watchdog(self):
+        if self._appbar_watchdog_timer.isActive():
+            self._appbar_watchdog_timer.stop()
+        self._appbar_repair_pending = False
+        self._appbar_repair_force = False
+        self._appbar_fullscreen_active = False
+        self._appbar_deep_repair_pending = False
+
+    def _verify_appbar(self):
+        if not getattr(self, "_appbar_active", False):
+            self._stop_appbar_watchdog()
+            return
+        if getattr(self, "_appbar_fullscreen_active", False):
+            return
+        if self._appbar_health_ok():
+            self._appbar_health_failures = 0
+            return
+
+        self._appbar_health_failures += 1
+        if self._appbar_health_failures >= 2:
+            self._schedule_appbar_deep_repair(delay=250)
+        else:
+            self._schedule_appbar_repair(delay=0, force_register=True)
+
+    def _schedule_appbar_repair(self, delay=250, force_register=False):
+        if not getattr(self, "_appbar_active", False):
+            return
+        self._appbar_repair_force = self._appbar_repair_force or force_register
+        if self._appbar_repair_pending:
+            return
+        self._appbar_repair_pending = True
+        QTimer.singleShot(delay, self._repair_appbar)
+
+    def _repair_appbar(self):
+        self._appbar_repair_pending = False
+        force_register = self._appbar_repair_force
+        self._appbar_repair_force = False
+        if not getattr(self, "_appbar_active", False):
+            return
+        if force_register:
+            self._release_appbar(restore_window=False)
+        self._apply_appbar()
+
+    def _manual_repair_appbar(self):
+        if not getattr(self, "_appbar_active", False):
+            self._toggle_appbar(True, delay=0)
+            return
+        self._appbar_health_failures = 0
+        self._schedule_appbar_deep_repair(delay=0)
+
+    def _appbar_health_ok(self):
+        if not getattr(self, "_appbar_active", False):
+            return True
+        if not self._appbar_geometry_matches():
+            return False
+        import sys
+        if sys.platform == "win32":
+            return self._appbar_work_area_reserved()
+        return True
+
+    def _appbar_geometry_matches(self):
+        rect = self._appbar_last_rect or self.geometry()
+        current = self.geometry()
+        tolerance = 3
+        return (
+            abs(current.x() - rect.x()) <= tolerance
+            and abs(current.y() - rect.y()) <= tolerance
+            and abs(current.width() - rect.width()) <= tolerance
+            and abs(current.height() - rect.height()) <= tolerance
+        )
+
+    def _appbar_work_area_reserved(self):
+        rect = self._appbar_last_rect
+        if rect is None:
+            return False
+        work = self._win32_work_area()
+        if work is None:
+            return True
+        tolerance = 3
+        edge = getattr(self, "_appbar_edge", "right")
+        if edge == "left":
+            return work.left() >= rect.right() - tolerance
+        if edge == "right":
+            return work.right() <= rect.left() + tolerance
+        if edge == "top":
+            return work.top() >= rect.bottom() - tolerance
+        return work.bottom() <= rect.top() + tolerance
+
+    def _win32_work_area(self):
+        import sys
+        if sys.platform != "win32":
+            return None
+        try:
+            import ctypes
+            import ctypes.wintypes as wt
+
+            SPI_GETWORKAREA = 0x0030
+            rc = wt.RECT()
+            ok = ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rc), 0)
+            if not ok:
+                return None
+            return QRect(rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top)
+        except Exception:
+            return None
+
+    def _schedule_appbar_deep_repair(self, delay=250):
+        if not getattr(self, "_appbar_active", False):
+            return
+        if self._appbar_deep_repair_pending:
+            return
+        self._appbar_deep_repair_pending = True
+        QTimer.singleShot(delay, self._deep_repair_appbar)
+
+    def _deep_repair_appbar(self):
+        self._appbar_deep_repair_pending = False
+        if not getattr(self, "_appbar_active", False):
+            return
+        self._release_appbar(restore_window=False)
+        self._appbar_registered_hwnd = None
+        self._appbar_last_rect = None
+        self._appbar_health_failures = 0
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.show()
+        QApplication.processEvents()
+        self._apply_appbar()
 
     def _update_appbar_ui(self):
         """Sync UI components with AppBar state."""
@@ -1041,6 +1236,25 @@ class MainWindow(QMainWindow):
         if self._appbar_active:
             self._release_appbar()
             self._apply_appbar()
+
+    def _set_appbar_topmost(self, enabled):
+        import sys
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+
+            hwnd = int(self._appbar_registered_hwnd or int(self.winId()))
+            HWND_TOPMOST = -1
+            HWND_NOTOPMOST = -2
+            SWP_NOSIZE = 0x0001
+            SWP_NOMOVE = 0x0002
+            SWP_NOACTIVATE = 0x0010
+            flags = SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+            insert_after = HWND_TOPMOST if enabled else HWND_NOTOPMOST
+            ctypes.windll.user32.SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, flags)
+        except Exception as e:
+            logging.debug(f"AppBar: Failed to update topmost state: {e}")
 
     def _apply_appbar(self):
         """Dock the window to the chosen screen edge."""
@@ -1072,15 +1286,19 @@ class MainWindow(QMainWindow):
         try:
             import ctypes
             import ctypes.wintypes as wt
+            self._appbar_applying = True
 
-            # Set flags BEFORE getting winId or registering, as flags can recreate the handle
-            self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-            self.show()
-            QApplication.processEvents()
+            # Set flags before first registration; doing it on every refresh can recreate the handle.
+            if self._appbar_registered_hwnd is None:
+                self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+                self.show()
+                QApplication.processEvents()
 
             ABM_NEW = 0x00000000
             ABM_QUERYPOS = 0x00000002
             ABM_SETPOS = 0x00000003
+            ABM_ACTIVATE = 0x00000006
+            ABM_WINDOWPOSCHANGED = 0x00000009
             ABE_LEFT, ABE_TOP, ABE_RIGHT, ABE_BOTTOM = 0, 1, 2, 3
 
             class APPBARDATA(ctypes.Structure):
@@ -1112,30 +1330,53 @@ class MainWindow(QMainWindow):
             # when it reserves the space it's already sitting in.
             shell32 = ctypes.windll.shell32
             user32 = ctypes.windll.user32
-            
-            # Register the bar
-            shell32.SHAppBarMessage(ABM_NEW, ctypes.byref(abd))
-            
-            # Send to Narnia immediately via direct Win32 call (bypasses Qt event queue)
-            # SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER = 0x0001 | 0x0010 | 0x0004 = 0x0015
-            user32.SetWindowPos(hwnd, 0, -10000, -10000, 0, 0, 0x0015)
-            QApplication.processEvents()
+            if not self._appbar_callback_msg:
+                self._appbar_callback_msg = user32.RegisterWindowMessageW("PyDSPMetersAppBarMessage")
+            if not self._appbar_taskbar_msg:
+                self._appbar_taskbar_msg = user32.RegisterWindowMessageW("TaskbarCreated")
+            abd.uCallbackMessage = self._appbar_callback_msg
+
+            registered_new = False
+            if self._appbar_registered_hwnd and self._appbar_registered_hwnd != hwnd:
+                self._release_appbar_win32(restore_window=False)
+
+            if self._appbar_registered_hwnd != hwnd:
+                result = shell32.SHAppBarMessage(ABM_NEW, ctypes.byref(abd))
+                if not result:
+                    logging.warning("AppBar: ABM_NEW returned 0; attempting position update anyway.")
+                self._appbar_registered_hwnd = hwnd
+                registered_new = True
+
+            if registered_new:
+                # Send to Narnia immediately via direct Win32 call (bypasses Qt event queue)
+                # SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER = 0x0001 | 0x0010 | 0x0004 = 0x0015
+                user32.SetWindowPos(hwnd, 0, -10000, -10000, 0, 0, 0x0015)
+                QApplication.processEvents()
             
             # Query and set the reserved space
             shell32.SHAppBarMessage(ABM_QUERYPOS, ctypes.byref(abd))
             shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(abd))
+            shell32.SHAppBarMessage(ABM_ACTIVATE, ctypes.byref(abd))
 
             final_rect = QRect(abd.rc.left, abd.rc.top,
                                abd.rc.right - abd.rc.left, abd.rc.bottom - abd.rc.top)
+            self._appbar_last_rect = QRect(final_rect)
             
             # Whiplash back to the reserved space
             self.setGeometry(final_rect)
             self.show()
             QApplication.processEvents()
+            if not getattr(self, "_appbar_fullscreen_active", False):
+                self._set_appbar_topmost(True)
+            shell32.SHAppBarMessage(ABM_WINDOWPOSCHANGED, ctypes.byref(abd))
+            self._appbar_health_failures = 0
+            self._appbar_applying = False
             
         except Exception as e:
+            self._appbar_applying = False
             logging.error(f"AppBar: Failed to dock (Win32): {e}")
             self._appbar_active = False
+            self._stop_appbar_watchdog()
             self._update_appbar_ui()
 
     def _apply_appbar_linux(self, rect):
@@ -1157,20 +1398,22 @@ class MainWindow(QMainWindow):
             strut = f"{l}, {r}, {t}, {b}"
             strut_partial = f"{l}, {r}, {t}, {b}, {lsy}, {ley}, {rsy}, {rey}, {tsx}, {tex}, {bsx}, {bex}"
             
+            subprocess.run(["xprop", "-id", hwnd, "-f", "_NET_WM_WINDOW_TYPE", "32a", "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DOCK"], capture_output=True)
+            subprocess.run(["xprop", "-id", hwnd, "-f", "_NET_WM_STATE", "32a", "-set", "_NET_WM_STATE", "_NET_WM_STATE_ABOVE, _NET_WM_STATE_STICKY"], capture_output=True)
             subprocess.run(["xprop", "-id", hwnd, "-f", "_NET_WM_STRUT", "32c", "-set", "_NET_WM_STRUT", strut], capture_output=True)
             subprocess.run(["xprop", "-id", hwnd, "-f", "_NET_WM_STRUT_PARTIAL", "32c", "-set", "_NET_WM_STRUT_PARTIAL", strut_partial], capture_output=True)
         except Exception as e:
             print(f"[AppBar] Linux xprop failed: {e}")
 
-    def _release_appbar(self):
+    def _release_appbar(self, restore_window=True):
         """Release the appbar reservation."""
         import sys
         if sys.platform == "win32":
-            self._release_appbar_win32()
+            self._release_appbar_win32(restore_window=restore_window)
         elif sys.platform == "linux":
-            self._release_appbar_linux()
+            self._release_appbar_linux(restore_window=restore_window)
 
-    def _release_appbar_win32(self):
+    def _release_appbar_win32(self, restore_window=True):
         try:
             import ctypes
             import ctypes.wintypes as wt
@@ -1185,25 +1428,31 @@ class MainWindow(QMainWindow):
 
             abd = APPBARDATA()
             abd.cbSize = ctypes.sizeof(APPBARDATA)
-            abd.hWnd = int(self.winId())
+            abd.hWnd = int(self._appbar_registered_hwnd or int(self.winId()))
             ctypes.windll.shell32.SHAppBarMessage(ABM_REMOVE, ctypes.byref(abd))
+            self._appbar_registered_hwnd = None
+            self._appbar_last_rect = None
+            self._appbar_health_failures = 0
             
             # Restore standard window flags to ensure taskbar visibility and correct behavior
-            self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-            self.show()
+            if restore_window:
+                self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+                self.show()
         except Exception as e:
             print(f"[AppBar] Failed to release (Win32): {e}")
 
-    def _release_appbar_linux(self):
+    def _release_appbar_linux(self, restore_window=True):
         import subprocess
         try:
             hwnd = str(int(self.winId()))
             subprocess.run(["xprop", "-id", hwnd, "-remove", "_NET_WM_STRUT"], capture_output=True)
             subprocess.run(["xprop", "-id", hwnd, "-remove", "_NET_WM_STRUT_PARTIAL"], capture_output=True)
+            subprocess.run(["xprop", "-id", hwnd, "-remove", "_NET_WM_WINDOW_TYPE"], capture_output=True)
             
             # Restore standard window flags
-            self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-            self.show()
+            if restore_window:
+                self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+                self.show()
         except Exception as e:
             print(f"[AppBar] Failed to release (Linux): {e}")
 
@@ -1460,6 +1709,7 @@ class MainWindow(QMainWindow):
         # Release appbar on close
         if self._appbar_active:
             self._appbar_active = False
+            self._stop_appbar_watchdog()
             self._release_appbar()
         event.accept()
         QApplication.instance().quit()

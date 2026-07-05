@@ -3,12 +3,12 @@ Oscilloscope Module: Real-time waveform display with zero-crossing trigger.
 """
 
 import numpy as np
-from PySide6.QtGui import QPainter, QColor, QPen, QPainterPath
-from PySide6.QtCore import Qt
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QLinearGradient, QFontMetrics
+from PySide6.QtCore import Qt, QRectF, QPointF
 
 from app.base_module import BaseModule
 from app.modules import register_module
-from app.theme import Colors
+from app.theme import Colors, Fonts
 
 
 @register_module("oscilloscope", "Oscilloscope")
@@ -21,8 +21,12 @@ class OscilloscopeModule(BaseModule):
         self._channel = "L+R"
         self._display_mode = "Dual" if audio_engine.channels >= 2 else "Overlay"
         self._orientation = "Horizontal"
+        self._gain_mode = "Auto Fit"
+        self._manual_gain = 1.0
+        self._auto_gains = {}
         self._grid_pixmap = None
-        self._last_size = (0, 0)
+        self._last_grid_key = None
+        self._sample_indices = np.arange(len(self._waveform_l), dtype=np.float32)
         self.module_key = "oscilloscope"
         super().__init__(audio_engine, title="Oscilloscope", parent=parent)
         self.canvas.set_render_func(self._render)
@@ -32,7 +36,9 @@ class OscilloscopeModule(BaseModule):
             "display_samples": self._display_samples,
             "channel": self._channel,
             "display_mode": getattr(self, "_display_mode", "Overlay"),
-            "orientation": getattr(self, "_orientation", "Horizontal")
+            "orientation": getattr(self, "_orientation", "Horizontal"),
+            "gain_mode": getattr(self, "_gain_mode", "Auto Fit"),
+            "manual_gain": getattr(self, "_manual_gain", 1.0),
         }
 
     def apply_settings(self, settings):
@@ -40,6 +46,8 @@ class OscilloscopeModule(BaseModule):
         self._channel = settings.get("channel", self._channel)
         self._display_mode = settings.get("display_mode", getattr(self, "_display_mode", "Overlay"))
         self._orientation = settings.get("orientation", getattr(self, "_orientation", "Horizontal"))
+        self._gain_mode = settings.get("gain_mode", getattr(self, "_gain_mode", "Auto Fit"))
+        self._manual_gain = float(settings.get("manual_gain", getattr(self, "_manual_gain", 1.0)))
 
     def build_context_menu(self, menu):
         from PySide6.QtGui import QActionGroup
@@ -71,6 +79,24 @@ class OscilloscopeModule(BaseModule):
             a.triggered.connect(lambda checked, v=d: setattr(self, "_display_mode", v))
             dg.addAction(a)
 
+        gm = menu.addMenu("Amplitude")
+        gg = QActionGroup(self)
+        gain_items = [
+            ("Auto Fit", "Auto Fit", None),
+            ("Auto Shared", "Auto Shared", None),
+            ("0.5x", "Fixed", 0.5),
+            ("1x", "Fixed", 1.0),
+            ("2x", "Fixed", 2.0),
+            ("5x", "Fixed", 5.0),
+            ("10x", "Fixed", 10.0),
+        ]
+        for label, mode, gain in gain_items:
+            a = gm.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(self._gain_action_checked(mode, gain))
+            a.triggered.connect(lambda checked, m=mode, g=gain: self._set_gain_mode(m, g))
+            gg.addAction(a)
+
         zm = menu.addMenu("Zoom Samples")
         zg = QActionGroup(self)
         for z in [256, 512, 1024, 2048, 4096, 8192]:
@@ -80,8 +106,23 @@ class OscilloscopeModule(BaseModule):
             a.triggered.connect(lambda checked, zv=z: setattr(self, "_display_samples", zv))
             zg.addAction(a)
 
+    def _gain_action_checked(self, mode, gain):
+        if mode != getattr(self, "_gain_mode", "Auto Fit"):
+            return False
+        if gain is None:
+            return True
+        return abs(float(gain) - getattr(self, "_manual_gain", 1.0)) < 0.01
+
+    def _set_gain_mode(self, mode, gain=None):
+        self._gain_mode = mode
+        if gain is not None:
+            self._manual_gain = float(gain)
+        self._auto_gains.clear()
+
     def on_audio_data(self, data: np.ndarray):
         n = len(data)
+        if n <= 0:
+            return
         buf_len = len(self._waveform_l)
         
         if n >= buf_len:
@@ -91,10 +132,10 @@ class OscilloscopeModule(BaseModule):
             else:
                 self._waveform_r[:] = data[-buf_len:, 0]
         else:
-            self._waveform_l = np.roll(self._waveform_l, -n)
+            self._waveform_l[:-n] = self._waveform_l[n:]
             self._waveform_l[-n:] = data[:, 0]
             r = data[:, 1] if data.shape[1] > 1 else data[:, 0]
-            self._waveform_r = np.roll(self._waveform_r, -n)
+            self._waveform_r[:-n] = self._waveform_r[n:]
             self._waveform_r[-n:] = r
 
     def _find_trigger(self, data):
@@ -124,7 +165,12 @@ class OscilloscopeModule(BaseModule):
         if self._channel == "Side": return [(l - r) * 0.5]
         return [l, r]
 
-    def _update_grid(self, w, h):
+    def _is_vertical(self, w, h):
+        if self._orientation == "Auto":
+            return h > w * 1.2
+        return self._orientation == "Vertical"
+
+    def _update_grid(self, w, h, is_vert):
         from PySide6.QtGui import QPixmap, QPen
         self._grid_pixmap = QPixmap(w, h)
         self._grid_pixmap.fill(Qt.transparent)
@@ -132,40 +178,40 @@ class OscilloscopeModule(BaseModule):
         painter = QPainter(self._grid_pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # Grid Colors
         grid_col = QColor(Colors.GRID)
-        grid_col.setAlpha(60)
+        grid_col.setAlpha(52)
         strong_col = QColor(Colors.GRID)
-        strong_col.setAlpha(120)
-        
-        is_vert = self._orientation == "Vertical"
-        if self._orientation == "Auto":
-            is_vert = h > w * 1.2
-            
-        # 1. Main Axes
-        painter.setPen(QPen(strong_col, 1, Qt.DashLine))
-        if is_vert:
-            mid_x = w / 2
-            painter.drawLine(int(mid_x), 0, int(mid_x), h)
-            # Time divisions
-            painter.setPen(QPen(grid_col, 1))
-            for i in range(1, 8):
-                y = int(h * i / 8)
-                painter.drawLine(0, y, w, y)
-        else:
-            mid_y = h / 2
-            painter.drawLine(0, int(mid_y), w, int(mid_y))
-            # Time divisions
-            painter.setPen(QPen(grid_col, 1))
-            for i in range(1, 8):
-                x = int(w * i / 8)
-                painter.drawLine(x, 0, x, h)
-                
-        # 2. 'Funky' Sub-ticks (Non-linear diagnostic look)
-        painter.setPen(QPen(grid_col, 0.5))
+        strong_col.setAlpha(130)
+        accent_dim = QColor(Colors.ACCENT_DIM)
+        accent_dim.setAlpha(24)
+
+        grad = QLinearGradient(0, 0, 0 if is_vert else w, h if is_vert else 0)
+        bg_edge = QColor(Colors.ACCENT_DIM)
+        bg_edge.setAlpha(18)
+        bg_mid = QColor(Colors.ACCENT)
+        bg_mid.setAlpha(5)
+        grad.setColorAt(0.0, bg_edge)
+        grad.setColorAt(0.45, bg_mid)
+        grad.setColorAt(1.0, QColor(0, 0, 0, 0))
+        painter.fillRect(0, 0, w, h, QBrush(grad))
+
+        minor_col = QColor(Colors.GRID)
+        minor_col.setAlpha(28)
+        painter.setPen(QPen(minor_col, 1, Qt.DotLine))
         if is_vert:
             for i in range(1, 16):
-                # logarithmic or sine-spaced ticks for 'funky' look
+                painter.drawLine(0, int(h * i / 16), w, int(h * i / 16))
+                painter.drawLine(int(w * i / 16), 0, int(w * i / 16), h)
+        else:
+            for i in range(1, 16):
+                painter.drawLine(int(w * i / 16), 0, int(w * i / 16), h)
+                painter.drawLine(0, int(h * i / 16), w, int(h * i / 16))
+
+        painter.setPen(QPen(grid_col, 0.5))
+        if is_vert:
+            painter.drawLine(int(w / 2), 0, int(w / 2), h)
+            painter.drawLine(0, int(h / 2), w, int(h / 2))
+            for i in range(1, 16):
                 f = np.sin(i / 16 * np.pi / 2)
                 x1 = int(w/2 + w/2 * f)
                 x2 = int(w/2 - w/2 * f)
@@ -174,6 +220,8 @@ class OscilloscopeModule(BaseModule):
                 painter.drawLine(x2, 0, x2, 4)
                 painter.drawLine(x2, h-4, x2, h)
         else:
+            painter.drawLine(0, int(h / 2), w, int(h / 2))
+            painter.drawLine(int(w / 2), 0, int(w / 2), h)
             for i in range(1, 16):
                 f = np.sin(i / 16 * np.pi / 2)
                 y1 = int(h/2 + h/2 * f)
@@ -183,7 +231,17 @@ class OscilloscopeModule(BaseModule):
                 painter.drawLine(0, y2, 4, y2)
                 painter.drawLine(w-4, y2, w, y2)
 
-        # 3. Corner Markers
+        if w >= 120 and h >= 50:
+            painter.setFont(Fonts.small())
+            painter.setPen(accent_dim)
+            fm = QFontMetrics(Fonts.small())
+            if is_vert:
+                painter.drawText(QRectF(3, 2, max(20, w - 6), fm.height() + 2), Qt.AlignLeft, "+1")
+                painter.drawText(QRectF(3, h - fm.height() - 4, max(20, w - 6), fm.height() + 2), Qt.AlignLeft, "-1")
+            else:
+                painter.drawText(QRectF(4, 2, 28, fm.height() + 2), Qt.AlignLeft, "+1")
+                painter.drawText(QRectF(4, h - fm.height() - 4, 28, fm.height() + 2), Qt.AlignLeft, "-1")
+
         cs = 8
         painter.setPen(QPen(strong_col, 1.5))
         painter.drawLine(0, 0, cs, 0); painter.drawLine(0, 0, 0, cs) # TL
@@ -192,19 +250,17 @@ class OscilloscopeModule(BaseModule):
         painter.drawLine(w, h, w-cs, h); painter.drawLine(w, h, w, h-cs) # BR
         
         painter.end()
-        self._last_size = (w, h)
+        self._last_grid_key = (w, h, is_vert)
 
     def _render(self, painter, w, h):
-        if (w, h) != self._last_size or self._grid_pixmap is None:
-            self._update_grid(w, h)
+        is_vert = self._is_vertical(w, h)
+        grid_key = (w, h, is_vert)
+        if grid_key != self._last_grid_key or self._grid_pixmap is None:
+            self._update_grid(w, h, is_vert)
             
         if self._grid_pixmap:
             painter.drawPixmap(0, 0, self._grid_pixmap)
-            
-        is_vert = self._orientation == "Vertical"
-        if self._orientation == "Auto":
-            is_vert = h > w * 1.2
-            
+
         display_chans = self._get_channels()
         colors = [Colors.ACCENT, Colors.ACCENT_PINK]
         mode = getattr(self, "_display_mode", "Overlay")
@@ -215,29 +271,113 @@ class OscilloscopeModule(BaseModule):
                 ch_w = w / n_ch
                 for idx, ch in enumerate(display_chans):
                     cx = ch_w * (idx + 0.5)
-                    self._draw_trace(painter, ch, w, h, cx, ch_w * 0.45, colors[idx % 2], vertical=True)
+                    self._draw_lane(painter, cx, w, h, idx, vertical=True)
+                    self._draw_trace(painter, ch, w, h, cx, ch_w * 0.45, colors[idx % 2], vertical=True, trace_key=idx)
             else:
                 mid_x = w / 2
                 for idx, ch in enumerate(display_chans):
-                    self._draw_trace(painter, ch, w, h, mid_x, w * 0.45, colors[idx % 2], vertical=True)
+                    self._draw_trace(painter, ch, w, h, mid_x, w * 0.45, colors[idx % 2], vertical=True, trace_key=idx)
         else:
             if mode == "Dual" and len(display_chans) > 1:
                 n_ch = len(display_chans)
                 ch_h = h / n_ch
                 for idx, ch in enumerate(display_chans):
                     cy = ch_h * (idx + 0.5)
-                    self._draw_trace(painter, ch, w, h, cy, ch_h * 0.45, colors[idx % 2], vertical=False)
+                    self._draw_lane(painter, cy, w, h, idx, vertical=False)
+                    self._draw_trace(painter, ch, w, h, cy, ch_h * 0.45, colors[idx % 2], vertical=False, trace_key=idx)
             else:
                 mid_y = h / 2
                 for idx, ch in enumerate(display_chans):
-                    self._draw_trace(painter, ch, w, h, mid_y, h * 0.45, colors[idx % 2], vertical=False)
+                    self._draw_trace(painter, ch, w, h, mid_y, h * 0.45, colors[idx % 2], vertical=False, trace_key=idx)
 
-    def _draw_trace(self, painter, ch, w, h, center, factor, color, vertical=False):
+        self._draw_status(painter, w, h, is_vert, len(display_chans), mode)
+
+    def _draw_lane(self, painter, center, w, h, idx, vertical=False):
+        col = QColor(Colors.GRID_BRIGHT)
+        col.setAlpha(80)
+        painter.setPen(QPen(col, 1, Qt.DashLine))
+        if vertical:
+            painter.drawLine(int(center), 0, int(center), h)
+        else:
+            painter.drawLine(0, int(center), w, int(center))
+
+        if w < 70 or h < 42:
+            return
+        label = "L" if idx == 0 else "R"
+        painter.setFont(Fonts.small())
+        color = QColor(Colors.ACCENT if idx == 0 else Colors.ACCENT_PINK)
+        color.setAlpha(150)
+        if vertical:
+            rect = QRectF(center - 10, 5, 20, 14)
+        else:
+            rect = QRectF(6, center - 7, 20, 14)
+        self.draw_text_badge(painter, rect, Qt.AlignCenter, label, color)
+
+    def _draw_status(self, painter, w, h, is_vert, channel_count, mode):
+        if w < 110 or h < 40:
+            return
+        painter.setFont(Fonts.small())
+        channel = self._channel
+        if channel == "L+R" and channel_count > 1:
+            channel = f"L+R {mode}"
+        if getattr(self, "_gain_mode", "Auto Fit") == "Fixed":
+            gain_label = f"{getattr(self, '_manual_gain', 1.0):g}x"
+        elif getattr(self, "_gain_mode", "Auto Fit") == "Auto Shared":
+            gain_label = "auto shared"
+        else:
+            gain_label = "auto"
+        sample_text = f"{self._display_samples} smp  {gain_label}"
+        fm = QFontMetrics(painter.font())
+        left_w = fm.horizontalAdvance(channel) + 14
+        right_w = fm.horizontalAdvance(sample_text) + 14
+        self.draw_text_badge(
+            painter,
+            QRectF(6, h - 18, min(left_w, max(32, w - 12)), 14),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            channel,
+            QColor(Colors.TEXT_DIM),
+        )
+        self.draw_text_badge(
+            painter,
+            QRectF(max(6, w - right_w - 6), 5, right_w, 14),
+            Qt.AlignCenter,
+            sample_text,
+            QColor(Colors.ACCENT),
+        )
+
+    def _get_trace_gain(self, samples, trace_key=0):
+        mode = getattr(self, "_gain_mode", "Auto Fit")
+        if mode == "Fixed":
+            return max(0.05, float(getattr(self, "_manual_gain", 1.0)))
+
+        if len(samples) < 2:
+            return 1.0
+
+        key = "shared" if mode == "Auto Shared" else trace_key
+        abs_samples = np.abs(samples)
+        if len(abs_samples) > 64:
+            peak = float(np.percentile(abs_samples, 99.5))
+        else:
+            peak = float(np.max(abs_samples))
+
+        if peak < 0.0005:
+            target = 1.0
+        else:
+            target = 0.86 / peak
+            target = max(0.25, min(32.0, target))
+
+        previous = self._auto_gains.get(key, target)
+        alpha = 0.45 if target < previous else 0.16
+        gain = previous + (target - previous) * alpha
+        self._auto_gains[key] = gain
+        return gain
+
+    def _draw_trace(self, painter, ch, w, h, center, factor, color, vertical=False, trace_key=0):
         trig = self._find_trigger(ch)
         
         # Use fractional interpolation for the display segment
         t_indices = np.linspace(trig, trig + self._display_samples, self._display_samples, endpoint=False)
-        seg = np.interp(t_indices, np.arange(len(ch)), ch)
+        seg = np.interp(t_indices, self._sample_indices, ch)
         
         if len(seg) < 2: return
         
@@ -249,15 +389,12 @@ class OscilloscopeModule(BaseModule):
         indices = np.linspace(0, len(seg) - 1, num_points).astype(np.int32)
         downsampled = seg[indices]
         
-        # Waveform values with clipping ("maxing" at bounds)
-        # We clip at 1.0/-1.0 relative to the center and factor
-        # If user wants "maxing" specifically when hitting the top/bottom:
-        vals = np.clip(downsampled, -1.0, 1.0)
+        gain = self._get_trace_gain(downsampled, trace_key)
+        vals = np.clip(downsampled * gain, -1.0, 1.0)
         
         t_coords = np.linspace(0, long_axis, num_points)
         v_coords = center - vals * factor
         
-        from PySide6.QtCore import QPointF
         if vertical:
             points = [QPointF(v_coords[i], t_coords[i]) for i in range(num_points)]
         else:

@@ -26,6 +26,9 @@ class WaveformModule(BaseModule):
         self._write_pos = 0
         self._display_mode = "Dual" if audio_engine.channels >= 2 else "Overlay"
         self._orientation = "Horizontal"
+        self._gain_mode = "Auto Fit"
+        self._manual_gain = 1.0
+        self._auto_gains = {}
         self.module_key = "waveform"
         super().__init__(audio_engine, title="Waveform", parent=parent)
         self.canvas.set_render_func(self._render)
@@ -36,7 +39,9 @@ class WaveformModule(BaseModule):
             "channel": self._channel,
             "speed": self._speed,
             "display_mode": self._display_mode,
-            "orientation": getattr(self, "_orientation", "Horizontal")
+            "orientation": getattr(self, "_orientation", "Horizontal"),
+            "gain_mode": getattr(self, "_gain_mode", "Auto Fit"),
+            "manual_gain": getattr(self, "_manual_gain", 1.0),
         }
 
     def apply_settings(self, settings):
@@ -44,6 +49,8 @@ class WaveformModule(BaseModule):
         self._speed = float(settings.get("speed", self._speed))
         self._display_mode = settings.get("display_mode", self._display_mode)
         self._orientation = settings.get("orientation", getattr(self, "_orientation", "Horizontal"))
+        self._gain_mode = settings.get("gain_mode", getattr(self, "_gain_mode", "Auto Fit"))
+        self._manual_gain = float(settings.get("manual_gain", getattr(self, "_manual_gain", 1.0)))
 
     def build_context_menu(self, menu):
         from PySide6.QtGui import QActionGroup
@@ -88,6 +95,37 @@ class WaveformModule(BaseModule):
             a.setChecked(self._display_mode == d)
             a.triggered.connect(lambda checked, v=d: setattr(self, "_display_mode", v))
             dg.addAction(a)
+
+        gm = menu.addMenu("Amplitude")
+        gg = QActionGroup(self)
+        gain_items = [
+            ("Auto Fit", "Auto Fit", None),
+            ("Auto Shared", "Auto Shared", None),
+            ("0.5x", "Fixed", 0.5),
+            ("1x", "Fixed", 1.0),
+            ("2x", "Fixed", 2.0),
+            ("5x", "Fixed", 5.0),
+            ("10x", "Fixed", 10.0),
+        ]
+        for label, mode, gain in gain_items:
+            a = gm.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(self._gain_action_checked(mode, gain))
+            a.triggered.connect(lambda checked, m=mode, g=gain: self._set_gain_mode(m, g))
+            gg.addAction(a)
+
+    def _gain_action_checked(self, mode, gain):
+        if mode != getattr(self, "_gain_mode", "Auto Fit"):
+            return False
+        if gain is None:
+            return True
+        return abs(float(gain) - getattr(self, "_manual_gain", 1.0)) < 0.01
+
+    def _set_gain_mode(self, mode, gain=None):
+        self._gain_mode = mode
+        if gain is not None:
+            self._manual_gain = float(gain)
+        self._auto_gains.clear()
 
     def on_audio_data(self, data: np.ndarray):
         # Consolidate samples into speed-dependent pixel chunks
@@ -143,13 +181,13 @@ class WaveformModule(BaseModule):
             maxs = (max_all[:, 0] + max_all[:, 1]) * 0.5
             mins = (min_all[:, 0] + min_all[:, 1]) * 0.5
             rmss = (rms_all[:, 0] + rms_all[:, 1]) * 0.5
-            self._draw_wave(painter, maxs, mins, rmss, Colors.ACCENT, (w/2 if is_vert else h/2), (w if is_vert else h), "both", is_vert, draw_dim)
+            self._draw_wave(painter, maxs, mins, rmss, Colors.ACCENT, (w/2 if is_vert else h/2), (w if is_vert else h), "both", is_vert, draw_dim, trace_key="mid")
             return
         elif self._channel == "Side":
             maxs = (max_all[:, 0] - max_all[:, 1]) * 0.5
             mins = (min_all[:, 0] - min_all[:, 1]) * 0.5
             rmss = np.abs(rms_all[:, 0] - rms_all[:, 1]) * 0.5
-            self._draw_wave(painter, maxs, mins, rmss, Colors.ACCENT_PURPLE, (w/2 if is_vert else h/2), (w if is_vert else h), "both", is_vert, draw_dim)
+            self._draw_wave(painter, maxs, mins, rmss, Colors.ACCENT_PURPLE, (w/2 if is_vert else h/2), (w if is_vert else h), "both", is_vert, draw_dim, trace_key="side")
             return
         else: # L+R or All
             channels = list(range(self.audio_engine.channels))
@@ -167,7 +205,7 @@ class WaveformModule(BaseModule):
                     else: painter.drawLine(0, int(i * strip_dim), w, int(i * strip_dim))
                 
                 if idx < len(max_all[0]):
-                    self._draw_wave(painter, max_all[:, idx], min_all[:, idx], rms_all[:, idx], colors[idx % len(colors)], center, strip_dim, "both", is_vert, draw_dim)
+                    self._draw_wave(painter, max_all[:, idx], min_all[:, idx], rms_all[:, idx], colors[idx % len(colors)], center, strip_dim, "both", is_vert, draw_dim, trace_key=idx)
         elif self._display_mode == "Split" and len(channels) > 1:
             mid_dim = (w if is_vert else h) / 2
             painter.setPen(QPen(QColor(Colors.GRID), 1))
@@ -175,9 +213,9 @@ class WaveformModule(BaseModule):
             else: painter.drawLine(0, int(mid_dim), w, int(mid_dim))
             c0, c1 = channels[0], channels[1]
             if c0 < len(max_all[0]):
-                self._draw_wave(painter, max_all[:, c0], min_all[:, c0], rms_all[:, c0], colors[c0 % len(colors)], mid_dim, (w if is_vert else h), "top", is_vert, draw_dim)
+                self._draw_wave(painter, max_all[:, c0], min_all[:, c0], rms_all[:, c0], colors[c0 % len(colors)], mid_dim, (w if is_vert else h), "top", is_vert, draw_dim, trace_key=c0)
             if c1 < len(max_all[0]):
-                self._draw_wave(painter, max_all[:, c1], min_all[:, c1], rms_all[:, c1], colors[c1 % len(colors)], mid_dim, (w if is_vert else h), "bottom", is_vert, draw_dim)
+                self._draw_wave(painter, max_all[:, c1], min_all[:, c1], rms_all[:, c1], colors[c1 % len(colors)], mid_dim, (w if is_vert else h), "bottom", is_vert, draw_dim, trace_key=c1)
         else:
             mid_dim = (w if is_vert else h) / 2
             painter.setPen(QPen(QColor(Colors.GRID), 1))
@@ -185,9 +223,36 @@ class WaveformModule(BaseModule):
             else: painter.drawLine(0, int(mid_dim), w, int(mid_dim))
             for idx in channels:
                 if idx < len(max_all[0]):
-                    self._draw_wave(painter, max_all[:, idx], min_all[:, idx], rms_all[:, idx], colors[idx % len(colors)], mid_dim, (w if is_vert else h), "both", is_vert, draw_dim)
+                    self._draw_wave(painter, max_all[:, idx], min_all[:, idx], rms_all[:, idx], colors[idx % len(colors)], mid_dim, (w if is_vert else h), "both", is_vert, draw_dim, trace_key=idx)
 
-    def _draw_wave(self, painter, maxs, mins, rmss, base_color, center, dim, side="both", vertical=False, draw_dim=None):
+    def _get_trace_gain(self, maxs, mins, trace_key=0):
+        mode = getattr(self, "_gain_mode", "Auto Fit")
+        if mode == "Fixed":
+            return max(0.05, float(getattr(self, "_manual_gain", 1.0)))
+
+        if len(maxs) < 1 or len(mins) < 1:
+            return 1.0
+
+        key = "shared" if mode == "Auto Shared" else trace_key
+        peaks = np.maximum(np.abs(maxs), np.abs(mins))
+        if len(peaks) > 64:
+            peak = float(np.percentile(peaks, 99.5))
+        else:
+            peak = float(np.max(peaks))
+
+        if peak < 0.0005:
+            target = 1.0
+        else:
+            target = 0.88 / peak
+            target = max(0.25, min(32.0, target))
+
+        previous = self._auto_gains.get(key, target)
+        alpha = 0.45 if target < previous else 0.14
+        gain = previous + (target - previous) * alpha
+        self._auto_gains[key] = gain
+        return gain
+
+    def _draw_wave(self, painter, maxs, mins, rmss, base_color, center, dim, side="both", vertical=False, draw_dim=None, trace_key=0):
         from PySide6.QtCore import QLineF
         h_factor = dim * 0.45
         draw_dim = draw_dim or len(maxs)
@@ -199,6 +264,10 @@ class WaveformModule(BaseModule):
             mins = np.minimum.reduceat(mins, idx)
             rmss = np.maximum.reduceat(rmss, idx)
         coord_scale = 0.0 if len(maxs) <= 1 else (draw_dim - 1) / (len(maxs) - 1)
+        gain = self._get_trace_gain(maxs, mins, trace_key)
+        maxs = np.clip(maxs * gain, -1.0, 1.0)
+        mins = np.clip(mins * gain, -1.0, 1.0)
+        rmss = np.clip(rmss * gain, 0.0, 1.0)
         
         base_lines = []
         yellow_lines = []

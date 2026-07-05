@@ -1,219 +1,514 @@
-import os
-import sys
-import subprocess
-import shutil
 import argparse
+import csv
+import importlib.util
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
 
-# --- ANSI Colors for Polished CMD Output ---
+
+APP_NAME = "PyDSPMeters"
+ENTRY_POINT = "main.pyw"
+DEFAULT_ICON = "icon.ico"
+BENIGN_HIDDEN_IMPORTS = {
+    "pycparser.lextab",
+    "pycparser.yacctab",
+    "scipy.special._cdflib",
+}
+HIDDEN_IMPORT_RE = re.compile(r'Hidden import "([^"]+)" not found')
+
+
 class Colors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
+    HEADER = "\033[95m"
+    BLUE = "\033[94m"
+    CYAN = "\033[96m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    RED = "\033[91m"
+    DIM = "\033[2m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
 
-def print_step(msg):
-    print(f"\n{Colors.OKBLUE}{Colors.BOLD}>>> {msg}{Colors.ENDC}")
 
-def print_success(msg):
-    print(f"{Colors.OKGREEN}✓ {msg}{Colors.ENDC}")
+def enable_ansi():
+    if sys.platform == "win32":
+        os.system("")
 
-def print_warning(msg):
-    print(f"{Colors.WARNING}! {msg}{Colors.ENDC}")
 
-def print_error(msg):
-    print(f"{Colors.FAIL}✗ {msg}{Colors.ENDC}")
+def print_step(message):
+    print(f"\n{Colors.BLUE}{Colors.BOLD}>>> {message}{Colors.RESET}")
 
-def find_icon(preferred_path=None, assume_yes=False):
+
+def print_success(message):
+    print(f"{Colors.GREEN}[OK] {message}{Colors.RESET}")
+
+
+def print_warning(message):
+    print(f"{Colors.YELLOW}[WARN] {message}{Colors.RESET}")
+
+
+def print_error(message):
+    print(f"{Colors.RED}[ERR] {message}{Colors.RESET}")
+
+
+def path_arg(value):
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def discover_icons():
+    roots = [Path("."), Path("app"), Path("assets"), Path("resources")]
+    icons = []
+    for root in roots:
+        if not root.exists():
+            continue
+        icons.extend(sorted(root.glob("*.ico")))
+    unique = []
+    seen = set()
+    for icon in icons:
+        resolved = icon.resolve()
+        if resolved not in seen:
+            unique.append(icon)
+            seen.add(resolved)
+    return unique
+
+
+def choose_icon(preferred_path=None, assume_yes=False, no_icon=False):
+    if no_icon:
+        return None
+
     if preferred_path:
-        if os.path.exists(preferred_path):
-            return os.path.abspath(preferred_path)
+        preferred = Path(preferred_path)
+        if preferred.exists():
+            return preferred.resolve()
         print_warning(f"Requested icon was not found: {preferred_path}")
 
-    # Only search known safe directories rather than entire tree
-    search_dirs = [".", "app", "assets"]
-    for d in search_dirs:
-        if not os.path.exists(d): continue
-        for file in os.listdir(d):
-            if file.endswith(".ico"):
-                icon_path = os.path.join(d, file)
-                if assume_yes:
-                    return os.path.abspath(icon_path)
-                choice = input(f"{Colors.OKCYAN}? Found icon '{icon_path}'. Use this for the executable? (y/n): {Colors.ENDC}").strip().lower()
-                if choice == 'y':
-                    return os.path.abspath(icon_path)
+    default_icon = Path(DEFAULT_ICON)
+    if default_icon.exists():
+        return default_icon.resolve()
+
+    icons = discover_icons()
+    if not icons:
+        return None
+
+    if assume_yes or not sys.stdin.isatty():
+        return icons[0].resolve()
+
+    print(f"{Colors.CYAN}Found executable icons:{Colors.RESET}")
+    for idx, icon in enumerate(icons, start=1):
+        print(f"  {idx}. {icon}")
+    print("  0. Build without an icon")
+
+    while True:
+        choice = input(f"{Colors.CYAN}Use which icon? [1]: {Colors.RESET}").strip()
+        if not choice:
+            return icons[0].resolve()
+        if choice == "0":
+            return None
+        try:
+            index = int(choice)
+        except ValueError:
+            print_warning("Please enter a number from the list.")
+            continue
+        if 1 <= index <= len(icons):
+            return icons[index - 1].resolve()
+        print_warning("That icon number is out of range.")
+
+
+def check_pyinstaller():
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "PyInstaller", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    return result.stdout.strip().splitlines()[0] if result.stdout.strip() else "unknown"
+
+
+def data_separator():
+    return ";" if sys.platform == "win32" else ":"
+
+
+def executable_path(dist_dir, app_name=APP_NAME, onefile=True):
+    suffix = ".exe" if sys.platform == "win32" else ""
+    if onefile:
+        return Path(dist_dir) / f"{app_name}{suffix}"
+    return Path(dist_dir) / app_name / f"{app_name}{suffix}"
+
+
+def locked_output_name(app_name):
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{app_name}-{stamp}"
+
+
+def executable_process_name(app_name):
+    stem = Path(app_name).stem
+    return f"{stem}.exe" if sys.platform == "win32" else stem
+
+
+def find_running_target_processes(app_name):
+    if sys.platform != "win32":
+        return []
+
+    image_name = executable_process_name(app_name)
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/FO", "CSV", "/NH"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError:
+        return []
+
+    processes = []
+    for row in csv.reader(result.stdout.splitlines()):
+        if len(row) < 2:
+            continue
+        name = row[0].strip()
+        if name.lower() != image_name.lower():
+            continue
+        processes.append(
+            {
+                "image": name,
+                "pid": row[1].strip(),
+                "session": row[2].strip() if len(row) > 2 else "",
+                "memory": row[4].strip() if len(row) > 4 else "",
+            }
+        )
+    return processes
+
+
+def describe_processes(processes):
+    return ", ".join(
+        f"{process['image']} pid={process['pid']}"
+        for process in processes
+    )
+
+
+def terminate_processes(processes):
+    for process in processes:
+        subprocess.run(
+            ["taskkill", "/PID", process["pid"], "/T", "/F"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+
+
+def wait_for_target_process_exit(app_name):
+    image_name = executable_process_name(app_name)
+    print_warning(f"Waiting for {image_name} to exit. Press Ctrl+C to abort.")
+    while True:
+        processes = find_running_target_processes(app_name)
+        if not processes:
+            print_success(f"{image_name} is no longer running.")
+            return
+        time.sleep(1.0)
+
+
+def timestamped_running_output(args, reason):
+    new_name = locked_output_name(args.name)
+    print_warning(reason)
+    print_warning(f"Using alternate output name: {new_name}")
+    return new_name
+
+
+def handle_running_target(args):
+    processes = find_running_target_processes(args.name)
+    if not processes:
+        return None
+
+    image_name = executable_process_name(args.name)
+    reason = f"{image_name} is running ({describe_processes(processes)}). PyInstaller cannot replace it."
+    mode = args.running_target
+
+    if mode == "prompt" and not sys.stdin.isatty():
+        mode = "timestamp" if args.locked_output == "timestamp" else "fail"
+
+    while processes:
+        if mode == "wait":
+            wait_for_target_process_exit(args.name)
+            return None
+        if mode == "terminate":
+            print_warning(f"Terminating {describe_processes(processes)}.")
+            terminate_processes(processes)
+            time.sleep(0.5)
+            processes = find_running_target_processes(args.name)
+            if not processes:
+                print_success(f"{image_name} was terminated.")
+                return None
+            raise SystemExit(f"{image_name} is still running after terminate attempt.")
+        if mode == "timestamp":
+            return timestamped_running_output(args, reason)
+        if mode == "fail":
+            print_error(reason)
+            print(f"{Colors.CYAN}Close {image_name}, or run with --running-target wait, terminate, or timestamp.{Colors.RESET}")
+            raise SystemExit(1)
+
+        print_warning(reason)
+        print(f"{Colors.CYAN}Choose: [c] closed/check again, [w] wait, [k] terminate, [t] timestamped build, [q] abort{Colors.RESET}")
+        choice = input(f"{Colors.CYAN}Action [c]: {Colors.RESET}").strip().lower() or "c"
+        if choice in {"c", "check", "closed"}:
+            processes = find_running_target_processes(args.name)
+            if not processes:
+                print_success(f"{image_name} is no longer running.")
+                return None
+            continue
+        if choice in {"w", "wait"}:
+            mode = "wait"
+            continue
+        if choice in {"k", "kill", "terminate"}:
+            mode = "terminate"
+            continue
+        if choice in {"t", "timestamp"}:
+            mode = "timestamp"
+            continue
+        if choice in {"q", "quit", "abort"}:
+            raise SystemExit(1)
+        print_warning("Please choose c, w, k, t, or q.")
+
     return None
 
-def check_tool(tool_name):
-    try:
-        subprocess.run(
-            [sys.executable, "-m", tool_name, "--version"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True
-        )
+
+def can_replace_file(path):
+    path = Path(path)
+    if not path.exists():
         return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
 
-def verify_build():
-    exe_name = "PyDSPMeters.exe" if sys.platform == "win32" else "PyDSPMeters"
-    exe_path = os.path.join("dist", exe_name)
-    if os.path.exists(exe_path):
-        print_success(f"Verified: {exe_path} exists!")
+    probe = path.with_name(f".{path.name}.replace-probe")
+    try:
+        if probe.exists():
+            probe.unlink()
+        path.rename(probe)
+        probe.rename(path)
         return True
-    return False
-
-def build_nuitka(entry_point, icon_path):
-    print_step("Compiling with Nuitka (Max Performance & Compression)...")
-    cmd = [
-        sys.executable, "-m", "nuitka",
-        "--onefile",  # Squeeze space into a single executable
-        "--enable-plugin=pyside6",
-        "--nofollow-import-to=PySide6.QtCharts",
-        "--nofollow-import-to=PySide6.QtNetwork",
-        "--nofollow-import-to=PySide6.QtMultimedia",
-        "--nofollow-import-to=PySide6.QtWebEngineCore",
-        "--nofollow-import-to=PySide6.QtWebEngineWidgets",
-        "--nofollow-import-to=PySide6.QtSql",
-        "--nofollow-import-to=PySide6.QtXml",
-        "--nofollow-import-to=PySide6.QtTest",
-        "--nofollow-import-to=PySide6.QtQml",
-        "--nofollow-import-to=PySide6.QtQuick",
-        "--nofollow-import-to=PySide6.QtShaderTools",
-        "--nofollow-import-to=PySide6.Qt3D",
-        "--nofollow-import-to=PySide6.QtPrintSupport",
-        "--nofollow-import-to=PySide6.QtDesigner",
-        "--nofollow-import-to=PySide6.QtHelp",
-        "--nofollow-import-to=PySide6.QtSvg",
-        "--nofollow-import-to=PySide6.QtSvgWidgets",
-        "--windows-console-mode=disable",
-        "--include-package=app",
-        "--include-package=dsp_accel",
-        "--follow-imports",
-        "--output-filename=PyDSPMeters.exe" if sys.platform == "win32" else "--output-filename=PyDSPMeters",
-        "--output-dir=dist",
-        "--remove-output", # Note: This removes intermediate C cache, increasing recompilation time.
-        entry_point
-    ]
-    if icon_path:
-        if sys.platform == "win32":
-            cmd.append(f"--windows-icon-from-ico={icon_path}")
-        elif sys.platform == "darwin":
-            cmd.append(f"--macos-app-icon={icon_path}")
-
-    try:
-        subprocess.check_call(cmd)
-        if verify_build():
-            print_success("Nuitka build completed successfully!")
-            return True
-        else:
-            print_error("Nuitka command succeeded but executable was not found.")
-            return False
-    except subprocess.CalledProcessError:
-        print_error("Nuitka build failed. (Ensure you have a C++ compiler and zstandard installed).")
-        return False
-
-def build_pyinstaller(entry_point, icon_path):
-    print_step("Compiling with PyInstaller (Fallback mode)...")
-    cmd = [
-        sys.executable, "-m", "PyInstaller",
-        "--noconfirm",
-        "--onefile",
-        "--windowed",
-        "--name=PyDSPMeters",
-        "--distpath=dist",
-        "--workpath=build",
-        "--clean",
-        "--hidden-import=app",
-        "--hidden-import=dsp_accel",
-        "--hidden-import=dsp_accel.dsp_accel",
-        "--collect-submodules=dsp_accel",
-    ]
-    if icon_path:
-        cmd.append(f"--icon={icon_path}")
-        
-    cmd.append(entry_point)
-    
-    try:
-        subprocess.check_call(cmd)
-        if verify_build():
-            print_success("PyInstaller build completed successfully!")
-            return True
-        else:
-            print_error("PyInstaller command succeeded but executable was not found.")
-            return False
-    except subprocess.CalledProcessError:
-        print_error("PyInstaller build failed.")
+    except OSError:
         return False
     finally:
-        # Clean up pyinstaller artifacts regardless of success/failure
-        if os.path.exists("PyDSPMeters.spec"):
-            os.remove("PyDSPMeters.spec")
-        if os.path.exists("build"):
-            shutil.rmtree("build", ignore_errors=True)
+        if probe.exists() and not path.exists():
+            try:
+                probe.rename(path)
+            except OSError:
+                pass
+
+
+def prepare_output_name(args):
+    running_output_name = handle_running_target(args)
+    if running_output_name:
+        return running_output_name
+
+    target = executable_path(args.dist_dir, app_name=args.name, onefile=not args.one_dir)
+    if can_replace_file(target):
+        return args.name
+
+    message = (
+        f"{target} is locked. Close the running app/exe, close any Explorer preview, "
+        "or let this build use a timestamped executable name."
+    )
+    if args.locked_output == "fail":
+        print_error(message)
+        print(f"{Colors.CYAN}Tip: run with --locked-output timestamp to build beside the locked exe.{Colors.RESET}")
+        raise SystemExit(1)
+
+    new_name = locked_output_name(args.name)
+    print_warning(message)
+    print_warning(f"Using alternate output name: {new_name}")
+    return new_name
+
+
+def is_benign_hidden_import_warning(line):
+    match = HIDDEN_IMPORT_RE.search(line)
+    return bool(match and match.group(1) in BENIGN_HIDDEN_IMPORTS)
+
+
+def classify_pyinstaller_line(line):
+    if is_benign_hidden_import_warning(line):
+        return Colors.DIM
+
+    lower = line.lower()
+    if "error" in lower or "failed" in lower or "traceback" in lower:
+        return Colors.RED
+    if "warning" in lower or "warn:" in lower or "missing" in lower:
+        return Colors.YELLOW
+    if "building" in lower or "completed successfully" in lower:
+        return Colors.GREEN
+    if "pyinstaller" in lower or "info:" in lower:
+        return Colors.CYAN
+    return Colors.DIM
+
+
+def stream_command(command, suppress_benign_warnings=False):
+    print(f"{Colors.DIM}{' '.join(command)}{Colors.RESET}\n")
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+
+    assert process.stdout is not None
+    for raw_line in process.stdout:
+        line = raw_line.rstrip()
+        if suppress_benign_warnings and is_benign_hidden_import_warning(line):
+            continue
+        color = classify_pyinstaller_line(line)
+        print(f"{color}{line}{Colors.RESET}")
+
+    return process.wait()
+
+
+def pyinstaller_command(args, icon_path):
+    command = [
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        "--noconfirm",
+        "--windowed",
+        f"--name={args.resolved_name}",
+        f"--distpath={args.dist_dir}",
+        f"--workpath={args.work_dir}",
+        "--clean",
+        "--hidden-import=app",
+    ]
+
+    dsp_spec = importlib.util.find_spec("dsp_accel")
+    if dsp_spec is not None:
+        command.append("--hidden-import=dsp_accel")
+        if dsp_spec.submodule_search_locations:
+            command.append("--collect-submodules=dsp_accel")
+        print_success("Rust DSP accelerator detected; including dsp_accel.")
+    else:
+        print_warning("Rust DSP accelerator not installed; build will use the Python fallback.")
+
+    if args.one_dir:
+        command.append("--onedir")
+    else:
+        command.append("--onefile")
+
+    if icon_path:
+        command.append(f"--icon={icon_path}")
+        command.append(f"--add-data={icon_path}{data_separator()}.")
+
+    for item in args.add_data:
+        command.append(f"--add-data={item}")
+
+    for item in args.hidden_import:
+        command.append(f"--hidden-import={item}")
+
+    if args.debug_imports:
+        command.append("--debug=imports")
+
+    command.append(ENTRY_POINT)
+    return command
+
+
+def cleanup_artifacts(args):
+    if args.keep_spec:
+        return
+    spec_path = Path(f"{args.resolved_name}.spec")
+    if spec_path.exists():
+        spec_path.unlink()
+        print_success(f"Removed {spec_path}")
+    if args.clean_work and Path(args.work_dir).exists():
+        shutil.rmtree(args.work_dir, ignore_errors=True)
+        print_success(f"Removed {args.work_dir}/")
+
+
+def verify_build(args):
+    exe = executable_path(args.dist_dir, app_name=args.resolved_name, onefile=not args.one_dir)
+    if exe.exists():
+        print_success(f"Built executable: {exe}")
+        return True
+    print_error(f"Expected executable was not found: {exe}")
+    return False
+
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Build PyDSPMeters distribution artifacts.")
-    parser.add_argument(
-        "--icon",
-        default=APP_ICON_NAME if "APP_ICON_NAME" in globals() else "icon.ico",
-        help="Icon file to use for the executable. Use an empty value to auto-detect.",
+    parser = argparse.ArgumentParser(
+        description="Build PyDSPMeters with PyInstaller.",
     )
-    parser.add_argument(
-        "--yes",
-        action="store_true",
-        help="Use the first discovered icon without prompting.",
-    )
+    parser.add_argument("--icon", type=path_arg, default=DEFAULT_ICON, help="Executable icon path. Empty string enables auto-detect.")
+    parser.add_argument("--no-icon", action="store_true", help="Build without an executable icon.")
+    parser.add_argument("--yes", action="store_true", help="Use the first discovered icon without prompting.")
+    parser.add_argument("--one-dir", action="store_true", help="Build an onedir distribution instead of onefile.")
+    parser.add_argument("--name", default=APP_NAME, help="Executable/app name passed to PyInstaller.")
+    parser.add_argument("--locked-output", choices=["timestamp", "fail"], default="timestamp", help="What to do when the target executable is locked.")
+    parser.add_argument("--running-target", choices=["prompt", "wait", "terminate", "timestamp", "fail"], default="prompt", help="What to do when the target executable is already running.")
+    parser.add_argument("--dist-dir", default="dist", help="PyInstaller output directory.")
+    parser.add_argument("--work-dir", default="build", help="PyInstaller temporary work directory.")
+    parser.add_argument("--keep-spec", action="store_true", help="Keep the generated .spec file.")
+    parser.add_argument("--no-clean-work", action="store_false", dest="clean_work", help="Keep the PyInstaller work directory.")
+    parser.add_argument("--debug-imports", action="store_true", help="Enable PyInstaller import debug output.")
+    parser.add_argument("--suppress-benign-warnings", action="store_true", help="Hide known harmless PyInstaller optional hidden-import warnings.")
+    parser.add_argument("--hidden-import", action="append", default=[], help="Extra hidden import to pass to PyInstaller.")
+    parser.add_argument("--add-data", action="append", default=[], help=f"Extra PyInstaller data entry, e.g. source{data_separator()}dest.")
     return parser.parse_args()
 
 
 def build():
-    # Enable ANSI colors on Windows CMD
-    if sys.platform == "win32":
-        os.system("")
-        
-    print(f"\n{Colors.HEADER}{Colors.BOLD}======================================{Colors.ENDC}")
-    print(f"{Colors.HEADER}{Colors.BOLD}   PyDSPMeters Distribution Builder   {Colors.ENDC}")
-    print(f"{Colors.HEADER}{Colors.BOLD}======================================{Colors.ENDC}\n")
-    
-    entry_point = "main.pyw"
-    if not os.path.exists(entry_point):
-        print_error(f"Could not find entry point: {entry_point}")
-        sys.exit(1)
+    enable_ansi()
 
     args = parse_args()
-    icon_path = find_icon(args.icon or None, assume_yes=args.yes)
+
+    print(f"\n{Colors.HEADER}{Colors.BOLD}======================================{Colors.RESET}")
+    print(f"{Colors.HEADER}{Colors.BOLD}   PyDSPMeters PyInstaller Builder    {Colors.RESET}")
+    print(f"{Colors.HEADER}{Colors.BOLD}======================================{Colors.RESET}\n")
+
+    entry = Path(ENTRY_POINT)
+    if not entry.exists():
+        print_error(f"Could not find entry point: {ENTRY_POINT}")
+        return 1
+
+    pyinstaller_version = check_pyinstaller()
+    if not pyinstaller_version:
+        print_error("PyInstaller is not installed.")
+        print(f"Run: {Colors.CYAN}pip install pyinstaller{Colors.RESET}")
+        return 1
+    print_success(f"PyInstaller {pyinstaller_version}")
+
+    icon_path = choose_icon(args.icon, assume_yes=args.yes, no_icon=args.no_icon)
     if icon_path:
         print_success(f"Using icon: {icon_path}")
     else:
-        print_warning("No icon selected or found.")
+        print_warning("Building without an executable icon.")
 
-    # Try Nuitka first
-    if check_tool("nuitka"):
-        success = build_nuitka(entry_point, icon_path)
-        if success:
-            sys.exit(0)
-        else:
-            print_warning("Nuitka failed. Attempting fallback to PyInstaller...")
-    else:
-        print_warning("Nuitka not found. Falling back to PyInstaller...")
+    args.resolved_name = prepare_output_name(args)
+    command = pyinstaller_command(args, icon_path)
+    print_step("Building executable")
+    return_code = stream_command(command, suppress_benign_warnings=args.suppress_benign_warnings)
+    cleanup_artifacts(args)
 
-    # Fallback to PyInstaller
-    if check_tool("PyInstaller"):
-        success = build_pyinstaller(entry_point, icon_path)
-        if success:
-            sys.exit(0)
-        else:
-            print_error("Both Nuitka and PyInstaller failed.")
-            sys.exit(1)
-    else:
-        print_error("PyInstaller not found either! Please install Nuitka or PyInstaller.")
-        print(f"Run: {Colors.OKCYAN}pip install nuitka zstandard{Colors.ENDC} OR {Colors.OKCYAN}pip install pyinstaller{Colors.ENDC}")
-        sys.exit(1)
+    if return_code != 0:
+        print_error(f"PyInstaller failed with exit code {return_code}.")
+        print_warning("If the traceback mentions PermissionError on dist\\*.exe, close the running exe or rebuild with --locked-output timestamp.")
+        return return_code
+
+    if not verify_build(args):
+        return 1
+
+    print_success("Build completed successfully.")
+    return 0
+
 
 if __name__ == "__main__":
-    build()
+    raise SystemExit(build())
