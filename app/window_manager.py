@@ -315,6 +315,7 @@ class MainWindow(QMainWindow):
         self.audio_engine = audio_engine
         self._splash = splash
         self._settings = SettingsManager.load()
+        self.setWindowTitle(SettingsManager.get_window_title())
 
         self.setWindowFlags(
             Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint

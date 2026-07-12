@@ -8,6 +8,25 @@ def test_get_settings_path():
     assert path.endswith("settings.json")
     assert "PyDSPMeters" in path
 
+def test_profile_uses_separate_settings_file():
+    try:
+        SettingsManager.set_profile_name("stream-left")
+        path = SettingsManager.get_settings_path()
+        assert path.endswith("settings-stream-left.json")
+        assert SettingsManager.get_window_title() == "PyDSPMeters - stream-left"
+        assert SettingsManager.get_log_filename() == "pydspmeters-stream-left.log"
+        assert SettingsManager.get_app_user_model_id().endswith(".stream-left")
+    finally:
+        SettingsManager.set_profile_name(None)
+
+def test_profile_name_is_sanitized_for_files():
+    try:
+        SettingsManager.set_profile_name("Stream Left / OBS")
+        assert SettingsManager.get_settings_filename() == "settings-Stream-Left-OBS.json"
+        assert SettingsManager.get_window_title() == "PyDSPMeters - Stream Left / OBS"
+    finally:
+        SettingsManager.set_profile_name(None)
+
 def test_save_and_load_settings(tmp_path, monkeypatch):
     # Mock get_settings_path to use a temporary directory
     test_file = tmp_path / "test_settings.json"

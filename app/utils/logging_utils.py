@@ -21,7 +21,7 @@ from app.theme import Colors, Fonts, build_stylesheet
 from app.settings import SettingsManager
 
 # --- Configuration ---
-LOG_FILENAME = "pydspmeters.log"
+LOG_FILENAME = SettingsManager.get_log_filename()
 LOG_PATH = os.path.join(SettingsManager.get_app_data_dir(), LOG_FILENAME)
 
 def setup_logging():
@@ -57,7 +57,7 @@ class CrashDialog(QDialog):
     """Stylized dialog shown when a fatal error occurs."""
     def __init__(self, exc_type, exc_value, exc_traceback):
         super().__init__()
-        self.setWindowTitle("System Interruption - PyDSPMeters")
+        self.setWindowTitle(f"System Interruption - {SettingsManager.get_window_title()}")
         self.setFixedSize(600, 450)
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.Dialog)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -218,7 +218,7 @@ def _cleanup_appbar_win32():
         # For now, if we can't find it, we just hope the OS cleans up 
         # (usually it does when the process dies, but sometimes it hangs)
         # To be safe, we try to find any window with our title
-        hwnd = ctypes.windll.user32.FindWindowW(None, "PyDSPMeters")
+        hwnd = ctypes.windll.user32.FindWindowW(None, SettingsManager.get_window_title())
         if hwnd:
             abd = APPBARDATA()
             abd.cbSize = ctypes.sizeof(APPBARDATA)

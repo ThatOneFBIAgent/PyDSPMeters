@@ -1,10 +1,14 @@
 import json
 import os
+import re
 import sys
 import threading
 
 SETTINGS_FILE = "settings.json"
 APP_NAME = "PyDSPMeters"
+APP_USER_MODEL_ID = "pydspmeters.app.1.0"
+PROFILE_ENV_VAR = "PYDSPMETERS_PROFILE"
+PROFILE_ARGS = ("--profile", "--instance", "--instance-name")
 
 
 # Module-level compilation checks to ensure Nuitka catches it
@@ -14,6 +18,72 @@ IS_COMPILED = IS_NUITKA or IS_PYINSTALLER
 
 class SettingsManager:
     """Manages application settings persistence using a JSON file."""
+
+    _profile_name_override = None
+
+    @staticmethod
+    def _profile_from_argv(argv=None):
+        argv = list(sys.argv if argv is None else argv)
+        for index, arg in enumerate(argv[1:], start=1):
+            for option in PROFILE_ARGS:
+                if arg == option and index + 1 < len(argv):
+                    value = argv[index + 1].strip()
+                    return value if value and not value.startswith("-") else None
+                prefix = option + "="
+                if arg.startswith(prefix):
+                    value = arg[len(prefix):].strip()
+                    return value or None
+        return None
+
+    @staticmethod
+    def _safe_profile_slug(name):
+        slug = re.sub(r"[^A-Za-z0-9._-]+", "-", name.strip()).strip(".-_")
+        return slug[:64]
+
+    @classmethod
+    def set_profile_name(cls, name):
+        """Override the current launch profile. Primarily useful in tests."""
+        if name is None:
+            cls._profile_name_override = None
+            return
+        cls._profile_name_override = str(name).strip() or None
+
+    @classmethod
+    def get_profile_name(cls):
+        if cls._profile_name_override is not None:
+            return cls._profile_name_override
+
+        profile = cls._profile_from_argv()
+        if not profile:
+            profile = os.environ.get(PROFILE_ENV_VAR, "").strip()
+        return profile or None
+
+    @classmethod
+    def get_profile_slug(cls):
+        profile = cls.get_profile_name()
+        if not profile:
+            return None
+        return cls._safe_profile_slug(profile) or None
+
+    @classmethod
+    def get_window_title(cls):
+        profile = cls.get_profile_name()
+        return APP_NAME if not profile else f"{APP_NAME} - {profile}"
+
+    @classmethod
+    def get_app_user_model_id(cls):
+        slug = cls.get_profile_slug()
+        return APP_USER_MODEL_ID if not slug else f"{APP_USER_MODEL_ID}.{slug.lower()}"
+
+    @classmethod
+    def get_settings_filename(cls):
+        slug = cls.get_profile_slug()
+        return SETTINGS_FILE if not slug else f"settings-{slug}.json"
+
+    @classmethod
+    def get_log_filename(cls):
+        slug = cls.get_profile_slug()
+        return "pydspmeters.log" if not slug else f"pydspmeters-{slug}.log"
 
     @staticmethod
     def get_system_app_data_dir():
@@ -36,9 +106,10 @@ class SettingsManager:
         """
         Returns the appropriate config directory.
         Defaults to AppData/Roaming, but if the app is run from a USB drive
-        or if a settings.json already exists next to the .exe, it uses portable mode.
+        or if settings already exist next to the .exe, it uses portable mode.
         """
         app_dir = None
+        settings_file = SettingsManager.get_settings_filename()
         
         if IS_COMPILED:
             if IS_PYINSTALLER:
@@ -49,8 +120,11 @@ class SettingsManager:
             # Check if we should use portable mode
             is_portable = False
             
-            # 1. Does settings.json already exist here? (User preference)
-            if os.path.exists(os.path.join(exe_dir, SETTINGS_FILE)):
+            # 1. Do settings already exist here? (User preference)
+            if (
+                os.path.exists(os.path.join(exe_dir, SETTINGS_FILE))
+                or os.path.exists(os.path.join(exe_dir, settings_file))
+            ):
                 is_portable = True
             else:
                 # 2. Is it on a USB/Removable drive?
@@ -97,7 +171,7 @@ class SettingsManager:
 
     @classmethod
     def get_settings_path(cls):
-        return os.path.join(cls.get_app_data_dir(), SETTINGS_FILE)
+        return os.path.join(cls.get_app_data_dir(), cls.get_settings_filename())
 
     @classmethod
     def load(cls):

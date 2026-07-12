@@ -12,6 +12,7 @@ import ctypes
 import glob
 
 from app.theme import build_stylesheet, Colors, Fonts, apply_theme
+from app.settings import SettingsManager
 from app.utils.logging_utils import setup_logging, setup_global_exception_handler
 
 # --- Application Configuration ---
@@ -171,6 +172,9 @@ def main():
     setup_global_exception_handler()
     import logging
     from app.dsp import accel as dsp_accel
+    profile = SettingsManager.get_profile_name()
+    if profile:
+        logging.info(f"Launch profile active: {profile}")
     logging.info(f"DSP accelerator active: {dsp_accel.is_accelerated()}")
 
     # Handle Ctrl+C (SIGINT)
@@ -183,12 +187,12 @@ def main():
     )
 
     app = QApplication(sys.argv)
-    app.setApplicationName("PyDSPMeters")
+    app.setApplicationName(SettingsManager.get_window_title())
     
     # Override default Python taskbar icon if a .ico is found or in settings
     if sys.platform == "win32":
         try:
-            myappid = 'pydspmeters.app.1.0'
+            myappid = SettingsManager.get_app_user_model_id()
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
         except Exception:
             pass
@@ -215,6 +219,7 @@ def main():
     
     # Show Splash immediately
     splash = CustomSplashScreen()
+    splash.setWindowTitle(SettingsManager.get_window_title())
     splash.show()
     app.processEvents()
     

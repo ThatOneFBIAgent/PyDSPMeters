@@ -170,6 +170,19 @@ Useful report sections include paint cadence, audio queue drain timing, module a
 * **Move mode**: Rearrange modules without fighting splitter handles.
 * **Portability**: Settings are stored in the app data directory, with source-run `settings.json` ignored by git.
 
+### Multiple OBS-Friendly Instances
+
+Launch the same executable with different profiles to give each instance a distinct window title, Windows app ID, settings file, and log file:
+
+```powershell
+dist/PyDSPMeters.exe --profile stream-left
+dist/PyDSPMeters.exe --profile stream-right
+```
+
+OBS Window Capture can then target `PyDSPMeters - stream-left` or `PyDSPMeters - stream-right` instead of guessing between identical windows. `--instance` and `--instance-name` are aliases for `--profile`.
+
+Do note these instances will be as if you've started the program for the first time, due to it not being able to find it's default config file.
+
 ---
 
 ## Development & Testing
